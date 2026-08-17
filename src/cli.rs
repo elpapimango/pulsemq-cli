@@ -31,6 +31,8 @@ pub enum Command {
     ///
     /// MQTT v5.0 and v3.1.1 only.
     Request(RequestArgs),
+    /// Drive load against a broker and report throughput and latency.
+    Bench(BenchArgs),
 }
 
 /// How to reach the broker. Flattened into every subcommand.
@@ -173,6 +175,64 @@ pub struct RequestArgs {
     pub count: u64,
 }
 
+#[derive(Args, Debug)]
+pub struct BenchArgs {
+    #[command(flatten)]
+    pub conn: ConnectionArgs,
+
+    /// Number of publishing connections.
+    #[arg(long, default_value_t = 1, value_name = "N")]
+    pub publishers: usize,
+
+    /// Number of subscribing connections.
+    #[arg(long, default_value_t = 0, value_name = "N")]
+    pub subscribers: usize,
+
+    /// Root of the topic tree: publisher k publishes to <prefix>/k and
+    /// subscribers take <prefix>/#.
+    #[arg(long, default_value = "bench", value_name = "PREFIX")]
+    pub topic_prefix: String,
+
+    /// Quality of Service for both publishing and subscribing: 0 or 1.
+    #[arg(short = 'q', long, default_value_t = 0, value_parser = clap::value_parser!(u8).range(0..=2))]
+    pub qos: u8,
+
+    /// Payload size in bytes. Below 16 there is no room for the measurement
+    /// header, and end-to-end latency is not reported.
+    #[arg(long, default_value_t = 64, value_name = "BYTES")]
+    pub payload_size: usize,
+
+    /// Total messages to publish across all publishers.
+    #[arg(long, value_name = "N")]
+    pub count: Option<u64>,
+
+    /// Stop after this many seconds.
+    #[arg(long, value_name = "SECS")]
+    pub duration: Option<u64>,
+
+    /// Offered load in messages per second, split across publishers.
+    /// Omitted, publishers send as fast as the connection allows.
+    #[arg(long, value_name = "MSGS_PER_SEC")]
+    pub rate: Option<f64>,
+
+    /// Unacknowledged messages allowed per publisher, capped by the broker's
+    /// Receive Maximum.
+    #[arg(long, default_value_t = 100, value_name = "N")]
+    pub inflight: usize,
+
+    /// Discard samples recorded during this many seconds at the start.
+    #[arg(long, default_value_t = 0, value_name = "SECS")]
+    pub warmup: u64,
+
+    /// Seconds to keep subscribers running after the publishers finish.
+    #[arg(long, default_value_t = 2, value_name = "SECS")]
+    pub drain: u64,
+
+    /// Emit the report as JSON instead of a table.
+    #[arg(long)]
+    pub json: bool,
+}
+
 /// The protocol versions, spelled the way the specs are numbered. A local enum
 /// rather than `ProtocolVersion` directly, because `ValueEnum` has to be
 /// implemented on a type this crate owns.
@@ -303,5 +363,21 @@ mod tests {
             "/tmp/pw",
         ])
         .is_err());
+    }
+
+    #[test]
+    fn bench_defaults_match_the_documented_ones() {
+        let cli = Cli::parse_from(["pulsemq-cli", "bench"]);
+        let Command::Bench(args) = cli.command else {
+            panic!("expected the bench subcommand");
+        };
+        assert_eq!(args.publishers, 1);
+        assert_eq!(args.subscribers, 0);
+        assert_eq!(args.topic_prefix, "bench");
+        assert_eq!(args.qos, 0);
+        assert_eq!(args.payload_size, 64);
+        assert_eq!(args.inflight, 100);
+        assert_eq!(args.drain, 2);
+        assert!(!args.json);
     }
 }

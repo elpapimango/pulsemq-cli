@@ -11,6 +11,9 @@ async fn main() -> ExitCode {
         Command::Pub(args) => publish::run(args).await,
         Command::Sub(args) => subscribe::run(args).await,
         Command::Request(args) => request::run(args).await,
+        Command::Bench(_) => Err(pulsemq_cli::error::Error::Usage(
+            "bench is not implemented yet".into(),
+        )),
     };
 
     match result {
