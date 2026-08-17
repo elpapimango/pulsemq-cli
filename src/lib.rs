@@ -10,6 +10,7 @@
 //! directly from `subscribe` — `request` drives the same subscribe / print /
 //! acknowledge path that `sub` does.
 
+pub mod bench;
 pub mod cli;
 pub mod client;
 pub mod error;
