@@ -18,7 +18,7 @@ path = "src/main.rs"
 # and writes whole frames over any AsyncRead/AsyncWrite. One codec, so client
 # and broker cannot disagree about the wire.
 pulsemq = { path = "../pulsemq", default-features = false }
-tokio = { version = "1.53", features = ["rt", "macros", "net", "io-util", "time"] }
+tokio = { version = "1.53", features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "time", "sync", "signal"] }
 clap = { version = "4.6.6", features = ["derive"] }
 # --json report output. Already present in the compiled tree through the
 # pulsemq dependency, so it adds no new build cost.

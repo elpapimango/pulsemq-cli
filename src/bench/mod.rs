@@ -8,6 +8,7 @@ use crate::cli::BenchArgs;
 use crate::error::{Error, Result};
 
 pub mod payload;
+pub mod publisher;
 pub mod schedule;
 pub mod stats;
 
