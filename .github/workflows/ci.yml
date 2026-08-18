@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  ci:
+    name: build · test · lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain versions
+        run: |
+          rustc --version
+          cargo --version
+          cargo clippy --version
+          cargo fmt --version
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Rustfmt (check)
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Build
+        run: cargo build --locked --verbose
+
+      - name: Test
+        run: cargo test --locked --verbose
+
+      # This crate has no dependency on the PulseMQ broker: no path
+      # dependency, no sibling checkout, no vendored build step. `--offline`
+      # after a `--locked` fetch proves the whole build resolves from
+      # Cargo.lock alone, so a re-coupling would fail here rather than in
+      # someone's fresh clone.
+      - name: Build offline (no broker checkout)
+        run: cargo build --offline --verbose

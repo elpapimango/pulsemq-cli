@@ -58,6 +58,12 @@ cargo clippy --all-targets --all-features -- -D warnings # lints
 
 Keep all four green. No step needs a broker checkout.
 
+`.github/workflows/ci.yml` runs exactly these four on every push and pull
+request to `main`, with `RUSTFLAGS: -D warnings`, plus one more: an
+`--offline` build. That last step is the standing guard on this crate's
+independence — if a broker path dependency ever comes back, it fails there
+rather than in someone's fresh clone.
+
 There are no automated end-to-end tests yet (`TODO.md` item 7). To exercise the
 real path you need some broker running — any spec-conformant one will do. With
 a PulseMQ checked out at `../pulsemq`:
