@@ -12,7 +12,8 @@ four subcommands:
 - `request` — publish a request, then wait on the reply topic and exit,
   **v5.0 / v3.1.1 only** — v3.1 has no Response Topic or Correlation Data
   property
-- `bench` — drive load against a broker and report throughput and latency
+- `bench` — drive publisher and subscriber load and report throughput and
+  latency percentiles, v5.0 / v3.1.1 / v3.1
 
 Written from scratch against the OASIS MQTT specifications. This is not a port
 or a reimplementation of any other client: no other project's source, option
@@ -43,8 +44,8 @@ spec spells them (packet and property names) rather than renaming them to match
 the product.
 
 Planned work is in [`TODO.md`](TODO.md) — item 1 is a **security audit**
-(credential handling and the untrusted-input path). It comes before new
-transports or flags.
+(credential handling and the untrusted-input path). It is the next item, and
+comes before new transports or flags.
 
 ## Commands
 
@@ -57,7 +58,7 @@ cargo clippy --all-targets --all-features -- -D warnings # lints
 
 Keep all four green. No step needs a broker checkout.
 
-There are no automated end-to-end tests yet (`TODO.md` item 8). To exercise the
+There are no automated end-to-end tests yet (`TODO.md` item 7). To exercise the
 real path you need some broker running — any spec-conformant one will do. With
 a PulseMQ checked out at `../pulsemq`:
 
@@ -92,7 +93,13 @@ src/client.rs     dial + CONNECT handshake + send/recv + packet-id allocation
 src/publish.rs    pub: PUBLISH, then finish the QoS 1/2 handshake
 src/subscribe.rs  sub: SUBSCRIBE, print, acknowledge — reused by request
 src/request.rs    request: subscribe, publish request, wait for the reply
-src/bench/        bench: publisher and subscriber tasks, latency stats, report
+src/bench/        bench, the only concurrent subcommand:
+                    mod.rs      Config, Stop, run(): spawn, join, report
+                    stats.rs    Samples, Summary, Counters, Report; percentiles
+                    payload.rs  the 16-byte measurement header
+                    schedule.rs absolute-deadline rate pacing
+                    publisher.rs one publisher: write side, ack side, window
+                    subscriber.rs one subscriber: subscribe, receive, ack, time
 src/error.rs      Usage / Rejected{code} / Disconnected / Unsupported / Mqtt
 tests/malformed.rs  the decoder must never panic on hostile bytes
 ```
@@ -122,6 +129,21 @@ splitting the stream first.
 
 Payloads are arbitrary bytes: `print_message` writes them to stdout unmodified.
 Do not route output through a lossy UTF-8 conversion.
+
+`bench` does not use `Client`. It calls `client::handshake` on a `TcpStream`,
+then splits the socket so a publisher can write and read acknowledgements at
+once — the concurrency the simple commands deliberately avoid. Keep that
+division: `pub`, `sub` and `request` stay sequential and easy to read, and the
+concurrent machinery stays in `src/bench/`.
+
+Runtime choice is per subcommand in `main.rs`: current-thread for the three
+simple commands, multi-threaded for `bench`. A load generator on one core
+measures the load generator.
+
+A `bench` task that fails must say why in terms of what the broker did. The
+publisher's ack task carries its read error out rather than dropping it,
+because the write side can only observe its in-flight window closing — and
+reporting that alone names the symptom furthest from the cause.
 
 ## What a client faces
 
