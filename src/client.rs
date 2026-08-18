@@ -123,6 +123,11 @@ impl Client {
             ));
         }
 
+        // Read before dialling so a bad --password-file fails instantly
+        // instead of after paying for a TCP handshake (or a connect timeout).
+        args.password()
+            .map_err(|e| Error::Usage(format!("cannot read the password file: {e}")))?;
+
         let mut stream = TcpStream::connect((args.broker.as_str(), args.port)).await?;
         // One small packet at a time is this tool's whole traffic pattern;
         // Nagle would add up to 40 ms to every request/reply round trip.
@@ -274,5 +279,33 @@ mod tests {
             }
         ));
         broker.await.expect("broker task");
+    }
+
+    /// Regression: a bad --password-file must fail before any network I/O,
+    /// not after paying for a TCP connect (or a connect timeout). Port 1 on
+    /// loopback is not listening, so if the ordering regressed this would
+    /// surface a connection error instead of the usage error.
+    #[tokio::test]
+    async fn connect_validates_the_password_file_before_dialling() {
+        let args = connection_args(
+            [
+                "pulsemq-cli",
+                "pub",
+                "-t",
+                "x",
+                "-b",
+                "127.0.0.1",
+                "-p",
+                "1",
+                "--password-file",
+                "/nonexistent/pulsemq-cli-password-file-that-does-not-exist",
+            ]
+            .as_slice(),
+        );
+        let err = Client::connect(&args)
+            .await
+            .err()
+            .expect("an unreadable password file is a usage error");
+        assert!(matches!(err, Error::Usage(_)));
     }
 }
