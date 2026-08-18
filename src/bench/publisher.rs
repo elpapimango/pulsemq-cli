@@ -227,7 +227,16 @@ pub async fn run(
     // A compliant broker closes its half of the socket once it has read our
     // DISCONNECT (3.14.4), which is what lets the read side above return.
     // A broker that does not is not this crate's problem to hang on: cap the
-    // wait and abort rather than let `run` block forever.
+    // wait and abort rather than let `run` block forever. This is a real
+    // run failure, not a quiet "nothing to report": returning `Err` here
+    // (rather than `Ok(Samples::new())`) is what lands this publisher in
+    // Task 9's `task_failures` and makes `Report::success()` false, so a
+    // wedged broker shows up in the report instead of looking like a
+    // publisher that simply had no samples. `counters.published` and
+    // `counters.bytes_sent` still reflect everything this publisher sent —
+    // they live on the shared `Counters`, not in the `Samples` this
+    // function returns, so they are not lost on this path; only the
+    // ack-latency samples the aborted ack task was holding are.
     let ack_task_abort = ack_task.abort_handle();
     match tokio::time::timeout(config.drain.max(Duration::from_secs(5)), ack_task).await {
         Ok(joined) => {
@@ -235,7 +244,11 @@ pub async fn run(
         }
         Err(_) => {
             ack_task_abort.abort();
-            Ok(Samples::new())
+            Err(Error::Usage(format!(
+                "publisher {index}: acknowledgement task did not finish within the drain \
+                 window; the broker likely never closed its half of the socket after \
+                 DISCONNECT (3.14.4)"
+            )))
         }
     }
 }
