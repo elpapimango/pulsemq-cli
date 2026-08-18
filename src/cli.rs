@@ -6,9 +6,9 @@
 //! `ConnectionArgs` flattened into every subcommand, so `--broker` means the
 //! same thing and appears in the same place everywhere.
 
+use crate::mqtt::types::ProtocolVersion;
 use clap::builder::PossibleValue;
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use pulsemq::types::ProtocolVersion;
 
 #[derive(Parser, Debug)]
 #[command(

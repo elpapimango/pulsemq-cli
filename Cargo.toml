@@ -1,10 +1,10 @@
 [package]
 name = "pulsemq-cli"
-version = "0.1.0"
+version = "0.9.0"
 edition = "2021"
 description = "pulsemq-cli — a command-line MQTT v5.0 / 3.1.1 / 3.1 client: publish, subscribe, request/response"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/elpapimango/pulsemq"
+repository = "https://github.com/elpapimango/pulsemq-cli"
 keywords = ["mqtt", "cli", "client", "iot", "pubsub"]
 categories = ["command-line-utilities", "network-programming"]
 
@@ -13,15 +13,11 @@ name = "pulsemq-cli"
 path = "src/main.rs"
 
 [dependencies]
-# The protocol layer is the broker's own codec, used as a library: `packet`
-# encodes/decodes all 15 control packets for v5.0/3.1.1/3.1 and `framing` reads
-# and writes whole frames over any AsyncRead/AsyncWrite. One codec, so client
-# and broker cannot disagree about the wire.
-pulsemq = { path = "../pulsemq", default-features = false }
+# The protocol layer is in-tree, under `src/mqtt` — this crate builds and ships
+# on its own, with no broker checkout beside it.
 tokio = { version = "1.53", features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "time", "sync", "signal"] }
 clap = { version = "4.6.6", features = ["derive"] }
-# --json report output. Already present in the compiled tree through the
-# pulsemq dependency, so it adds no new build cost.
+# --json report output.
 serde_json = "1"
 
 [profile.release]

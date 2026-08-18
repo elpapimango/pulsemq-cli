@@ -3,9 +3,9 @@
 //! The subscribe must precede the publish, or a fast responder can answer
 //! before the subscription exists and the reply is lost.
 
-use pulsemq::codec::Properties;
-use pulsemq::packet::{Packet, PubAck, Publish};
-use pulsemq::types::{ProtocolVersion, QoS, ReasonCode};
+use crate::mqtt::codec::Properties;
+use crate::mqtt::packet::{Packet, PubAck, Publish};
+use crate::mqtt::types::{ProtocolVersion, QoS, ReasonCode};
 
 use crate::cli::RequestArgs;
 use crate::client::Client;

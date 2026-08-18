@@ -4,10 +4,9 @@ A command-line MQTT client for **v5.0**, **v3.1.1** and **v3.1**: publish a
 message, subscribe to topics, or do one request/reply round trip. One binary
 with three subcommands.
 
-Written from scratch in Rust against the OASIS MQTT specifications. The
-protocol layer is the [PulseMQ](https://github.com/elpapimango/pulsemq) broker's
-own codec, used as a library, so client and broker cannot disagree about the
-wire format.
+Written from scratch in Rust against the OASIS MQTT specifications, including
+the wire format: the codec, the 15 control packets and the framing all live in
+this crate under `src/mqtt`. It speaks to any spec-conformant broker.
 
 ## Build
 
@@ -15,8 +14,8 @@ wire format.
 cargo build --release
 ```
 
-The crate expects the broker repository checked out beside this one at
-`../pulsemq`.
+No other checkout, no C toolchain, no system libraries. The dependencies are
+`tokio`, `clap` and `serde_json`.
 
 ## Use
 

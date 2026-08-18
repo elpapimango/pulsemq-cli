@@ -2,12 +2,12 @@
 //!
 //! Distinguishes the three things a user needs to tell apart: bad arguments,
 //! a broker that answered with a Reason Code, and everything underneath
-//! (transport and codec errors from the `pulsemq` library).
+//! (transport and codec errors from the `mqtt` layer).
 
 use std::fmt;
 
-use pulsemq::error::MqttError;
-use pulsemq::types::ReasonCode;
+use crate::mqtt::error::MqttError;
+use crate::mqtt::types::ReasonCode;
 
 pub type Result<T> = std::result::Result<T, Error>;
 

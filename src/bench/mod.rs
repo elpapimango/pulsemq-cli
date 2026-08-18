@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use pulsemq::types::QoS;
+use crate::mqtt::types::QoS;
 
 use crate::cli::BenchArgs;
 use crate::error::{Error, Result};

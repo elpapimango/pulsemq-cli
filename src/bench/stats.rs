@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use pulsemq::types::ReasonCode;
+use crate::mqtt::types::ReasonCode;
 
 /// Latency samples in nanoseconds, collected by one task.
 ///
@@ -384,7 +384,7 @@ mod tests {
         assert_eq!(summary.max_ns, 3);
     }
 
-    use pulsemq::types::ReasonCode;
+    use crate::mqtt::types::ReasonCode;
     use std::time::Duration;
 
     fn totals() -> CounterTotals {

@@ -12,9 +12,9 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use pulsemq::framing::{read_packet, write_packet, ReadOutcome};
-use pulsemq::packet::{Packet, Publish};
-use pulsemq::types::{QoS, ReasonCode};
+use crate::mqtt::framing::{read_packet, write_packet, ReadOutcome};
+use crate::mqtt::packet::{Packet, Publish};
+use crate::mqtt::types::{QoS, ReasonCode};
 use tokio::net::TcpStream;
 use tokio::sync::{watch, Mutex, Semaphore};
 
@@ -218,7 +218,7 @@ pub async fn run(
     }
     let _ = write_packet(
         &mut writer,
-        &Packet::Disconnect(pulsemq::packet::Disconnect::new(ReasonCode::Success)),
+        &Packet::Disconnect(crate::mqtt::packet::Disconnect::new(ReasonCode::Success)),
         version,
     )
     .await;
@@ -257,10 +257,10 @@ pub async fn run(
 mod tests {
     use super::*;
     use crate::bench::stats::Counters;
+    use crate::mqtt::framing::{read_packet, write_packet, ReadOutcome};
+    use crate::mqtt::packet::{Connack, PubAck};
+    use crate::mqtt::types::{ProtocolVersion, ReasonCode};
     use clap::Parser;
-    use pulsemq::framing::{read_packet, write_packet, ReadOutcome};
-    use pulsemq::packet::{Connack, PubAck};
-    use pulsemq::types::{ProtocolVersion, ReasonCode};
     use std::sync::atomic::AtomicU64;
     use tokio::net::TcpListener;
 

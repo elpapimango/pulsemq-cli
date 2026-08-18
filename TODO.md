@@ -14,11 +14,12 @@ broker sends it, so both directions need review.
   in memory after the CONNECT is encoded rather than living in a `Vec<u8>` until
   drop.
 - **Untrusted input from the broker** — everything after CONNECT is attacker
-  input if the broker is hostile or in the path. The codec comes from the
-  `pulsemq` crate, whose `tests/malformed.rs` proves `Packet::decode` does not
+  input if the broker is hostile or in the path. The codec is this crate's own
+  code, in `src/mqtt`, and `tests/malformed.rs` proves `Packet::decode` does not
   panic on hostile bytes; confirm that guarantee actually covers the client
-  direction (CONNACK, SUBACK, PUBLISH properties) and that this crate adds no
-  panic of its own — no `unwrap`, no indexing, no unchecked cast — on that path.
+  direction (CONNACK, SUBACK, PUBLISH properties) and that the layers above it
+  add no panic of their own — no `unwrap`, no indexing, no unchecked cast — on
+  that path.
 - **Resource limits** — `client::MAX_PACKET_SIZE` is the protocol maximum, so a
   broker can make the tool allocate 256 MB. Decide a sane default and expose it
   as a flag. Same question for an unbounded `sub` run.
@@ -56,8 +57,9 @@ tool used to talk to it.
 ## 3. TLS and mutual TLS
 
 `--cafile`, `--cert`, `--key`, `--insecure`, and a default port of 8883 when TLS
-is on. The broker's `tls.rs` builds a server acceptor, so the client side (root
-store, SNI, client certificate) is new code here, on `tokio-rustls`.
+is on. All of it — root store, SNI, client certificate — is new code here, on
+`tokio-rustls`, behind a non-default Cargo feature so the plain-TCP build keeps
+its current dependency tree.
 
 ## 4. Payload sources
 
@@ -77,11 +79,15 @@ User properties, message expiry, content type and payload format indicator on
 
 ## 7. WebSocket transport
 
-`ws://` and `wss://`. The broker's `ws.rs` shows the handshake and the
-byte-stream adapter; `Client` holds a concrete `TcpStream` and has to become
-generic over the stream first — the same prerequisite item 2 needs.
+`ws://` and `wss://`. The handshake must offer the `mqtt` subprotocol or the
+server rejects it at the HTTP layer, before any MQTT packet is exchanged.
+`Client` holds a concrete `TcpStream` and has to become generic over the stream
+first — the same prerequisite item 2 needs.
 
 ## 8. End-to-end tests
 
-Spawn `../pulsemq`, then assert the publish/subscribe and request/reply round
-trips. The smoke test in `CLAUDE.md` covers this by hand today.
+Spawn a broker — `../pulsemq` if one is checked out, otherwise any
+spec-conformant one — then assert the publish/subscribe and request/reply round
+trips. The smoke test in `CLAUDE.md` covers this by hand today. The broker stays
+a test fixture, discovered at run time; it must not become a build dependency
+again.

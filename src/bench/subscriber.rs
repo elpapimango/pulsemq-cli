@@ -5,9 +5,9 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use pulsemq::framing::{read_packet, write_packet, ReadOutcome};
-use pulsemq::packet::{Packet, PubAck, RetainHandling, Subscribe, TopicFilter};
-use pulsemq::types::{QoS, ReasonCode};
+use crate::mqtt::framing::{read_packet, write_packet, ReadOutcome};
+use crate::mqtt::packet::{Packet, PubAck, RetainHandling, Subscribe, TopicFilter};
+use crate::mqtt::types::{QoS, ReasonCode};
 use tokio::net::TcpStream;
 use tokio::sync::watch;
 
@@ -158,10 +158,10 @@ mod tests {
     use super::*;
     use crate::bench::payload::{self, Header};
     use crate::bench::stats::Counters;
+    use crate::mqtt::framing::{read_packet, write_packet, ReadOutcome};
+    use crate::mqtt::packet::{Connack, Publish, SubAck};
+    use crate::mqtt::types::{ProtocolVersion, ReasonCode};
     use clap::Parser;
-    use pulsemq::framing::{read_packet, write_packet, ReadOutcome};
-    use pulsemq::packet::{Connack, Publish, SubAck};
-    use pulsemq::types::{ProtocolVersion, ReasonCode};
     use tokio::net::TcpListener;
 
     /// Bound on how long any test may wait on a task that a bug elsewhere in
@@ -225,7 +225,7 @@ mod tests {
             );
             let publish = Publish {
                 dup: false,
-                qos: pulsemq::types::QoS::AtMostOnce,
+                qos: crate::mqtt::types::QoS::AtMostOnce,
                 retain: false,
                 topic: "bench/0".into(),
                 packet_id: None,
@@ -341,7 +341,7 @@ mod tests {
             .expect("SUBACK");
             let publish = Publish {
                 dup: false,
-                qos: pulsemq::types::QoS::AtMostOnce,
+                qos: crate::mqtt::types::QoS::AtMostOnce,
                 retain: false,
                 topic: "bench/0".into(),
                 packet_id: None,

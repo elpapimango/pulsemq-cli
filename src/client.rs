@@ -7,9 +7,9 @@
 
 use std::time::Duration;
 
-use pulsemq::framing::{read_packet, write_packet, ReadOutcome};
-use pulsemq::packet::{Connect, Packet};
-use pulsemq::types::{ProtocolVersion, ReasonCode};
+use crate::mqtt::framing::{read_packet, write_packet, ReadOutcome};
+use crate::mqtt::packet::{Connect, Packet};
+use crate::mqtt::types::{ProtocolVersion, ReasonCode};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
@@ -81,7 +81,7 @@ where
             what: "connection".into(),
             code: ack.reason_code,
         }),
-        ReadOutcome::Packet(other, _) => Err(Error::Mqtt(pulsemq::error::protocol(format!(
+        ReadOutcome::Packet(other, _) => Err(Error::Mqtt(crate::mqtt::error::protocol(format!(
             "expected CONNACK, got {}",
             other.name()
         )))),
@@ -195,7 +195,7 @@ impl Client {
     /// Send DISCONNECT and close. v3.x DISCONNECT carries no reason code or
     /// properties; the codec handles that difference.
     pub async fn disconnect(mut self) -> Result<()> {
-        let packet = Packet::Disconnect(pulsemq::packet::Disconnect::new(ReasonCode::Success));
+        let packet = Packet::Disconnect(crate::mqtt::packet::Disconnect::new(ReasonCode::Success));
         self.send(&packet).await?;
         Ok(())
     }
@@ -204,9 +204,9 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mqtt::framing::{read_packet, write_packet, ReadOutcome};
+    use crate::mqtt::packet::Connack;
     use clap::Parser;
-    use pulsemq::framing::{read_packet, write_packet, ReadOutcome};
-    use pulsemq::packet::Connack;
     use tokio::io::duplex;
 
     fn connection_args(argv: &[&str]) -> ConnectionArgs {
