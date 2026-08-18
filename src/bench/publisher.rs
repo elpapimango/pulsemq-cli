@@ -70,9 +70,26 @@ pub async fn run(
         let counters = counters.clone();
         tokio::spawn(async move {
             let mut samples = Samples::new();
-            while let Ok(ReadOutcome::Packet(packet, _)) =
-                read_packet(&mut reader, MAX_PACKET_SIZE, version).await
-            {
+            // Why the read error is carried out rather than dropped: when a
+            // broker kills the connection mid-run, the only thing the write
+            // side observes is its window closing. Reporting that alone names
+            // the symptom furthest from the cause — "in-flight window closed"
+            // is what the operator sees when the broker actually said
+            // "malformed packet". The cause lives here, so it leaves here.
+            let mut read_error: Option<Error> = None;
+            loop {
+                let packet = match read_packet(&mut reader, MAX_PACKET_SIZE, version).await {
+                    Ok(ReadOutcome::Packet(packet, _)) => packet,
+                    // The broker closed its half. Expected once this publisher
+                    // has sent DISCONNECT (3.14.4); premature closure shows up
+                    // as a short acknowledged count rather than an error,
+                    // because a clean close is not itself a protocol failure.
+                    Ok(ReadOutcome::Eof) => break,
+                    Err(e) => {
+                        read_error = Some(e.into());
+                        break;
+                    }
+                };
                 match packet {
                     Packet::Puback(ack) => {
                         if ack.reason_code.is_error() {
@@ -108,7 +125,7 @@ pub async fn run(
             // semaphore so a write side blocked in `acquire_owned` on a full
             // window gets an error back instead of hanging forever.
             permits.close();
-            samples
+            (samples, read_error)
         })
     };
 
@@ -116,6 +133,10 @@ pub async fn run(
     let quota = config.quota_for(index as usize);
     let mut sent: u64 = 0;
     let mut next_packet_id: u16 = 0;
+    // Set when the window closes under us. The ack task holds the reason it
+    // closed, so this only records *that* it happened; the tail below joins
+    // that task and reports what it saw.
+    let mut window_closed = false;
 
     loop {
         if quota.is_some_and(|q| sent >= q) {
@@ -141,9 +162,17 @@ pub async fn run(
         } else {
             let acquire = permits.clone().acquire_owned();
             tokio::select! {
-                res = acquire => Some(
-                    res.map_err(|_| Error::Usage("in-flight window closed".into()))?,
-                ),
+                res = acquire => match res {
+                    Ok(permit) => Some(permit),
+                    // The ack side closed the semaphore, which it only does
+                    // once no further acknowledgement can arrive. Stop sending
+                    // and fall through to the tail, which reports the reason
+                    // rather than this symptom.
+                    Err(_) => {
+                        window_closed = true;
+                        break;
+                    }
+                },
                 // A full window blocks `acquire` indefinitely if nothing
                 // ever acknowledges; without this arm a stop signal (or
                 // Ctrl-C via Task 9's duration deadline) could not break in
@@ -212,9 +241,16 @@ pub async fn run(
 
     // Give outstanding acknowledgements a moment to land, then close the
     // socket so the read side returns.
-    let drain_deadline = Instant::now() + Duration::from_secs(5);
-    while !in_flight.lock().await.is_empty() && Instant::now() < drain_deadline {
-        tokio::time::sleep(Duration::from_millis(10)).await;
+    //
+    // Skipped entirely when the window closed under us: that only happens once
+    // the ack task has ended, so nothing is left to do the acknowledging and
+    // every one of these five seconds would be spent waiting for a reply that
+    // cannot come.
+    if !window_closed {
+        let drain_deadline = Instant::now() + Duration::from_secs(5);
+        while !in_flight.lock().await.is_empty() && Instant::now() < drain_deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
     let _ = write_packet(
         &mut writer,
@@ -240,7 +276,21 @@ pub async fn run(
     let ack_task_abort = ack_task.abort_handle();
     match tokio::time::timeout(config.drain.max(Duration::from_secs(5)), ack_task).await {
         Ok(joined) => {
-            joined.map_err(|e| Error::Usage(format!("publisher {index} ack task failed: {e}")))
+            let (samples, read_error) = joined
+                .map_err(|e| Error::Usage(format!("publisher {index} ack task failed: {e}")))?;
+            // A read error outranks everything else this publisher could
+            // report: it is why the acknowledgements stopped, and the window
+            // closing was only the consequence.
+            match read_error {
+                Some(e) => Err(Error::Usage(format!(
+                    "publisher {index}: the broker's reply stream failed: {e}"
+                ))),
+                None if window_closed => Err(Error::Usage(format!(
+                    "publisher {index}: the broker closed the connection after \
+                     {sent} message(s), before acknowledging the rest"
+                ))),
+                None => Ok(samples),
+            }
         }
         Err(_) => {
             ack_task_abort.abort();

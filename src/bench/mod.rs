@@ -1,9 +1,13 @@
 //! Broker performance testing: `pulsemq-cli bench`.
 
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use tokio::sync::watch;
 
 use crate::mqtt::types::QoS;
 
+use crate::bench::stats::{Counters, Report, ReportConfig, Samples};
 use crate::cli::BenchArgs;
 use crate::error::{Error, Result};
 
@@ -153,6 +157,164 @@ pub fn effective_inflight(requested: usize, broker_receive_maximum: Option<u16>)
         .map(usize::from)
         .unwrap_or(usize::MAX);
     requested.min(cap).max(1)
+}
+
+/// How long to let subscribers settle before the first publish.
+///
+/// Each subscriber task awaits its own SUBACK, but a SUBACK only says the
+/// broker recorded the subscription — it does not say every *other*
+/// subscriber has one too. Publishing the instant the last SUBACK lands still
+/// races the slowest subscriber's routing state. This is a pragmatic margin,
+/// not a correctness guarantee: the drain window at the other end is what
+/// actually keeps late deliveries from being counted as lost.
+const SUBSCRIBER_SETTLE: Duration = Duration::from_millis(200);
+
+/// Turn per-task results into the report's failure list, labelled so a reader
+/// knows which connection died.
+fn collect_failures(results: Vec<Result<()>>, role: &str) -> Vec<String> {
+    results
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, result)| result.err().map(|e| format!("{role} {index}: {e}")))
+        .collect()
+}
+
+/// Await a set of task handles, merging the samples of those that finished and
+/// recording a result per task so the report can name what failed.
+///
+/// A panicking task is a failure of that connection, not of the run: the
+/// remaining handles are still awaited and the report still prints.
+async fn join_tasks(
+    handles: Vec<tokio::task::JoinHandle<Result<Samples>>>,
+) -> (Samples, Vec<Result<()>>) {
+    let mut merged = Samples::new();
+    let mut results = Vec::with_capacity(handles.len());
+    for handle in handles {
+        match handle.await {
+            Ok(Ok(samples)) => {
+                merged.merge(samples);
+                results.push(Ok(()));
+            }
+            Ok(Err(e)) => results.push(Err(e)),
+            Err(e) => results.push(Err(Error::Usage(format!("task panicked: {e}")))),
+        }
+    }
+    (merged, results)
+}
+
+/// Run the benchmark and print the report.
+pub async fn run(args: BenchArgs) -> Result<()> {
+    let config = Arc::new(Config::from_args(&args)?);
+    let counters = Arc::new(Counters::default());
+    let baseline = Instant::now();
+    let warmup_until = baseline + config.warmup;
+    let (stop_tx, stop_rx) = watch::channel(false);
+
+    // Subscribers first: a message published before a subscription exists is
+    // delivered to nobody, and the short receive count that follows looks like
+    // a broker fault rather than a test that raced itself.
+    let subscriber_handles: Vec<_> = (0..config.subscribers)
+        .map(|index| {
+            tokio::spawn(subscriber::run(
+                index as u32,
+                config.clone(),
+                args.conn.clone(),
+                counters.clone(),
+                baseline,
+                warmup_until,
+                stop_rx.clone(),
+            ))
+        })
+        .collect();
+    if config.subscribers > 0 {
+        tokio::time::sleep(SUBSCRIBER_SETTLE).await;
+    }
+
+    let started = Instant::now();
+    let publisher_handles: Vec<_> = (0..config.publishers)
+        .map(|index| {
+            tokio::spawn(publisher::run(
+                index as u32,
+                config.clone(),
+                args.conn.clone(),
+                counters.clone(),
+                baseline,
+                warmup_until,
+                stop_rx.clone(),
+            ))
+        })
+        .collect();
+
+    // Stop on Ctrl-C, or when the run's own deadline expires. Either way the
+    // report still prints for whatever completed, which is the point: a run
+    // interrupted at second 20 of 60 is still 20 seconds of measurement.
+    let deadline_stop = {
+        let stop_tx = stop_tx.clone();
+        let deadline = config.deadline();
+        tokio::spawn(async move {
+            match deadline {
+                Some(d) => {
+                    tokio::select! {
+                        _ = tokio::time::sleep(d) => {}
+                        _ = tokio::signal::ctrl_c() => {}
+                    }
+                }
+                None => {
+                    let _ = tokio::signal::ctrl_c().await;
+                }
+            }
+            let _ = stop_tx.send(true);
+        })
+    };
+
+    let (mut ack_samples, publisher_results) = join_tasks(publisher_handles).await;
+    // Measured from the first publish to the last, so a run cut short reports
+    // the rate it achieved rather than the one it was aiming for.
+    let elapsed = started.elapsed();
+
+    // Publishing is done; let deliveries still in flight arrive before the
+    // subscribers are told to stop. Those messages are late, not lost, and
+    // counting them as lost would blame the broker for the client's impatience.
+    tokio::time::sleep(config.drain).await;
+    let _ = stop_tx.send(true);
+    deadline_stop.abort();
+
+    let (mut e2e_samples, subscriber_results) = join_tasks(subscriber_handles).await;
+
+    let mut task_failures = collect_failures(publisher_results, "publisher");
+    task_failures.extend(collect_failures(subscriber_results, "subscriber"));
+
+    let report = Report {
+        config: ReportConfig {
+            publishers: config.publishers,
+            subscribers: config.subscribers,
+            qos: config.qos.as_u8(),
+            payload_size: config.payload_size,
+            inflight: config.inflight,
+            rate: config.rate,
+            topic_prefix: config.topic_prefix.clone(),
+        },
+        elapsed,
+        totals: counters.snapshot(),
+        task_failures,
+        ack: ack_samples.summary(),
+        end_to_end: e2e_samples.summary(),
+        end_to_end_disabled: config.subscribers > 0 && !config.measures_end_to_end(),
+    };
+
+    if config.json {
+        println!("{}", report.to_json());
+    } else {
+        print!("{}", report.to_table());
+    }
+
+    if report.success() {
+        Ok(())
+    } else {
+        Err(Error::Usage(
+            "the run completed with failures or refused messages; see the report above".into(),
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -306,6 +468,74 @@ mod tests {
     /// alone has a reciprocal period (~5e18s) under `Duration::MAX`
     /// (~1.84e19s), but split across 4 publishers the per-publisher rate is
     /// 5e-20, whose reciprocal (~2e19s) overflows it.
+    #[test]
+    fn task_failures_are_collected_with_their_role_and_index() {
+        let failures = collect_failures(
+            vec![Ok(()), Err(crate::error::Error::Usage("boom".into()))],
+            "publisher",
+        );
+        assert_eq!(failures, vec!["publisher 1: boom".to_string()]);
+    }
+
+    #[test]
+    fn a_clean_sweep_of_results_produces_no_failures() {
+        assert!(collect_failures(vec![Ok(()), Ok(())], "subscriber").is_empty());
+    }
+
+    /// End to end through the real code path, against the broker in the
+    /// sibling repo when it is available. Ignored by default because it needs
+    /// that broker binary built and a free port.
+    ///
+    /// Run with:
+    ///   cargo build --manifest-path ../pulsemq/Cargo.toml --bin pulsemq
+    ///   cargo test bench::tests::a_small_run_publishes_and_receives -- --ignored
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn a_small_run_publishes_and_receives() {
+        use std::process::{Command as ProcessCommand, Stdio};
+
+        let broker_bin = "../pulsemq/target/debug/pulsemq";
+        let mut broker = ProcessCommand::new(broker_bin)
+            .args([
+                "--listen-addr",
+                "127.0.0.1:18841",
+                "--admin-addr",
+                "127.0.0.1:19041",
+                "--db-path",
+                "/tmp/pulsemq-bench-test.db",
+                "--sys-interval",
+                "0",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("broker binary built; see the doc comment");
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let args = args_from(&[
+            "pulsemq-cli",
+            "bench",
+            "-b",
+            "127.0.0.1",
+            "-p",
+            "18841",
+            "--publishers",
+            "2",
+            "--subscribers",
+            "1",
+            "--count",
+            "200",
+            "--qos",
+            "1",
+        ]);
+        let result = run(args).await;
+        // Kill then reap: `kill` only signals, and an unreaped child stays a
+        // zombie for the lifetime of the test binary.
+        let _ = broker.kill();
+        let _ = broker.wait();
+        result.expect("the run completes");
+    }
+
     #[test]
     fn a_rate_safe_alone_is_rejected_once_split_across_publishers() {
         let args = args_from(&["pulsemq-cli", "bench", "--rate", "2e-19"]);
