@@ -11,6 +11,7 @@ pub mod payload;
 pub mod publisher;
 pub mod schedule;
 pub mod stats;
+pub mod subscriber;
 
 /// The largest offered rate accepted by `--rate`. Above this, per-message
 /// scheduling stops being meaningful; `Duration::from_secs_f64(1.0 / rate)`
