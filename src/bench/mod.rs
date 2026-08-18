@@ -70,13 +70,17 @@ impl Config {
                 )));
             }
             // A rate can sit inside (0, MAX_RATE] and still be pathologically
-            // small: its reciprocal period overflows what `Duration` can
-            // represent, and `Duration::from_secs_f64` in schedule.rs panics
-            // on that. Reject it here instead.
-            let period_secs = 1.0 / rate;
+            // small once split across publishers: `Schedule::new` in
+            // schedule.rs receives `per_publisher_rate()` (rate / publishers),
+            // not the raw rate, and its reciprocal period must fit in a
+            // `Duration` or `Duration::from_secs_f64` panics. Validate the
+            // quantity that actually reaches schedule.rs.
+            let per_publisher_rate = rate / args.publishers as f64;
+            let period_secs = 1.0 / per_publisher_rate;
             if !period_secs.is_finite() || period_secs > Duration::MAX.as_secs_f64() {
                 return Err(Error::Usage(format!(
-                    "--rate {rate} is too small: the resulting period does not fit"
+                    "--rate {rate} split across {} publisher(s) is too small: the resulting period does not fit",
+                    args.publishers
                 )));
             }
         }
@@ -292,5 +296,27 @@ mod tests {
         let args = args_from(&["pulsemq-cli", "bench", "--rate", "500"]);
         let config = Config::from_args(&args).unwrap();
         assert_eq!(config.rate, Some(500.0));
+    }
+
+    /// `Schedule::new` receives `per_publisher_rate()` (rate / publishers),
+    /// not the raw rate, so a rate that is safe alone can still make the
+    /// per-publisher share pathologically small once split. `--rate 2e-19`
+    /// alone has a reciprocal period (~5e18s) under `Duration::MAX`
+    /// (~1.84e19s), but split across 4 publishers the per-publisher rate is
+    /// 5e-20, whose reciprocal (~2e19s) overflows it.
+    #[test]
+    fn a_rate_safe_alone_is_rejected_once_split_across_publishers() {
+        let args = args_from(&["pulsemq-cli", "bench", "--rate", "2e-19"]);
+        assert!(Config::from_args(&args).is_ok());
+
+        let args = args_from(&[
+            "pulsemq-cli",
+            "bench",
+            "--rate",
+            "2e-19",
+            "--publishers",
+            "4",
+        ]);
+        assert!(Config::from_args(&args).is_err());
     }
 }
