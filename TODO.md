@@ -2,35 +2,24 @@
 
 Ordered. Pick the top item.
 
-## 1. Security audit
+## 1. Security audit — remaining items
 
-Before any feature work. This tool handles credentials and parses whatever a
-broker sends it, so both directions need review.
+The first pass is done; see "Done" below for what it changed. What it did not
+close:
 
-- **Credential handling** — `--password` is visible in `ps` output and lands in
-  shell history; `--password-file` exists but nothing checks the file's
-  permissions. Decide what to do about a world-readable password file, whether
-  to support an environment variable, and whether the password should be zeroed
-  in memory after the CONNECT is encoded rather than living in a `Vec<u8>` until
-  drop.
-- **Untrusted input from the broker** — everything after CONNECT is attacker
-  input if the broker is hostile or in the path. The codec is this crate's own
-  code, in `src/mqtt`, and `tests/malformed.rs` proves `Packet::decode` does not
-  panic on hostile bytes; confirm that guarantee actually covers the client
-  direction (CONNACK, SUBACK, PUBLISH properties) and that the layers above it
-  add no panic of their own — no `unwrap`, no indexing, no unchecked cast — on
-  that path.
-- **Resource limits** — `client::MAX_PACKET_SIZE` is the protocol maximum, so a
-  broker can make the tool allocate 256 MB. Decide a sane default and expose it
-  as a flag. Same question for an unbounded `sub` run.
-- **Terminal output** — payloads go to stdout as raw bytes, so a broker can
-  emit ANSI escape sequences into the user's terminal. Decide whether to escape
-  non-printable bytes when stdout is a TTY.
-- **Transport** — connections are plaintext today and there is no warning that
-  credentials cross the wire in the clear. At minimum say so; see item 2.
-
-Write findings into this file, fix what the audit finds, and add a regression
-test per fix.
+- **Credential lifetime** — the password lives in a `Vec<u8>` until drop rather
+  than being zeroed once the CONNECT is encoded. Doing it properly means either
+  the `zeroize` dependency or a hand-written `Drop`, and neither stops the
+  compiler from having left a copy behind during a move or a realloc. Decide
+  whether the guarantee is worth the dependency.
+- **Unbounded `sub`** — `sub` without `--count` runs forever and buffers
+  nothing, so there is no leak, but there is also no ceiling on how long a
+  hostile broker can hold the terminal. Decide whether a `--max-messages` or a
+  time limit belongs here.
+- **Plaintext warning** — nothing says credentials are crossing the wire in the
+  clear. Deliberately left out for now: until TLS exists (item 2) the warning
+  would fire on every authenticated connection and be trained away. Revisit
+  when there is an alternative to point at.
 
 ## 2. TLS and mutual TLS
 
@@ -86,3 +75,10 @@ of packet identifiers awaiting PUBREL, drained between publishes.
   `docs/superpowers/specs/2026-08-17-bench-mode-design.md`.
 - **Decoupling from the broker crate** — the MQTT wire format lives in
   `src/mqtt`; the crate builds with no PulseMQ checkout beside it.
+- **Security audit, first pass** — `--max-packet-size` (1 MiB default, also
+  advertised as the v5 Maximum Packet Size) closes a 256 MB allocation a broker
+  could demand; control characters are escaped when stdout is a terminal, while
+  pipes and redirects stay byte-exact; `PULSEMQ_PASSWORD` joins the credential
+  sources and a world-readable password file warns. The decoder was audited and
+  found clean: every `Reader` access is bounds-checked and no `unwrap`, index
+  or unchecked cast sits on the broker-input path.

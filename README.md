@@ -48,6 +48,34 @@ status is 0 on success and 1 on any error, with the reason on stderr —
 including the broker's Reason Code when a connection, publish or subscription is
 refused.
 
+## Talking to a broker you do not trust
+
+Everything after CONNECT is attacker input if the broker is hostile or sits in
+the network path, so three things are not left to the broker's good behaviour.
+
+**Packet size.** `--max-packet-size` caps an inbound packet at 1 MiB by
+default, and the same number goes to the broker as the v5 Maximum Packet Size.
+The cap matters because a packet's buffer is sized from the length it declares:
+without one, a broker can make the tool reserve the protocol maximum of 256 MB
+by sending five bytes of header. Raise it when you genuinely receive larger
+messages.
+
+**Terminal output.** Payloads reach stdout byte for byte, so a pipe or a
+redirect gets exactly what arrived. When stdout is a terminal, control
+characters are escaped as `\xNN` first — otherwise a payload could carry ANSI
+sequences that move the cursor, repaint the screen, or rewrite output you
+already read. Printable text, multi-byte UTF-8 included, is untouched.
+
+**Credentials.** In order of precedence: `--password-file`, then `--password`,
+then the `PULSEMQ_PASSWORD` environment variable. The environment comes last so
+a variable left in a shell profile cannot override what you just typed.
+`--password` is visible in `ps` output and in shell history; the file and the
+variable are not. A password file readable by anyone but its owner earns a
+warning, not a refusal.
+
+Connections are plaintext today — TLS is `TODO.md` item 2 — so credentials
+cross the wire in the clear.
+
 ## Measuring a broker
 
 `bench` opens N publishing and M subscribing connections and reports what the

@@ -35,6 +35,68 @@ pub enum Command {
     Bench(BenchArgs),
 }
 
+/// Largest inbound packet accepted unless `--max-packet-size` says otherwise.
+///
+/// The protocol maximum is 268,435,455 bytes, and defaulting to it means a
+/// broker can make this tool allocate 256 MB by declaring a Remaining Length
+/// and then sending nothing: `framing::read_packet` sizes its buffer from the
+/// declared length before any payload byte arrives. Everything the broker
+/// sends is untrusted input, so the ceiling is set here rather than taken on
+/// the broker's word. 1 MiB matches PulseMQ's own default; a run that needs
+/// more says so explicitly.
+pub const DEFAULT_MAX_PACKET_SIZE: u32 = 1024 * 1024;
+
+/// The protocol's own ceiling on a packet (2.1.4): a Remaining Length is a
+/// four-byte Variable Byte Integer, so nothing larger can be framed.
+pub const PROTOCOL_MAX_PACKET_SIZE: u32 = 268_435_455;
+
+/// Environment variable holding the password, used when neither
+/// `--password-file` nor `--password` is given.
+///
+/// It exists because the two flags each leak: `--password` shows up in `ps`
+/// output and in shell history, and `--password-file` needs a file to exist
+/// somewhere. An environment variable does neither, though it is still visible
+/// to anything that can read this process's environment.
+pub const PASSWORD_ENV_VAR: &str = "PULSEMQ_PASSWORD";
+
+/// Warn when a password file is readable by anyone but its owner.
+///
+/// A warning rather than a refusal: the credential is the operator's to
+/// manage, and a tool that stops mid-task over file bits is a tool people work
+/// around. Unix-only — Windows permissions do not map onto these bits, and
+/// pretending otherwise would produce a warning that means nothing.
+///
+/// Said once per process, because `password()` is deliberately called more
+/// than once — `Client::connect` validates the file before dialling and the
+/// handshake reads it again — and `bench` calls it once per connection. The
+/// same sentence repeated a dozen times reads like a fault in the tool rather
+/// than advice about the file.
+#[cfg(unix)]
+fn warn_if_readable_by_others(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    static WARNED: std::sync::Once = std::sync::Once::new();
+
+    let Ok(metadata) = std::fs::metadata(path) else {
+        // Unreadable or missing: `std::fs::read` reports that properly a
+        // moment later, with the real error. Nothing to say here.
+        return;
+    };
+    let mode = metadata.permissions().mode();
+    if mode & 0o077 != 0 {
+        WARNED.call_once(|| {
+            eprintln!(
+                "pulsemq-cli: warning: {} is readable by others (mode {:04o}); \
+                 consider chmod 600",
+                path.display(),
+                mode & 0o7777
+            );
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn warn_if_readable_by_others(_path: &std::path::Path) {}
+
 /// How to reach the broker. Flattened into every subcommand.
 #[derive(Args, Debug, Clone)]
 pub struct ConnectionArgs {
@@ -72,6 +134,11 @@ pub struct ConnectionArgs {
     #[arg(short = 'k', long, default_value_t = 60, value_name = "SECS")]
     pub keepalive: u16,
 
+    /// Largest inbound packet to accept, in bytes. Also sent to the broker as
+    /// the v5 Maximum Packet Size so it never offers a larger one.
+    #[arg(long, default_value_t = DEFAULT_MAX_PACKET_SIZE, value_name = "BYTES")]
+    pub max_packet_size: u32,
+
     /// Resume the broker-side session instead of starting clean. Needs
     /// `--client-id`, since a generated identifier cannot be resumed.
     #[arg(long, requires = "client_id")]
@@ -87,17 +154,51 @@ impl ConnectionArgs {
         self.protocol.into()
     }
 
+    /// The inbound packet ceiling, validated.
+    ///
+    /// Zero is not merely useless here: as a v5 Maximum Packet Size it is a
+    /// Protocol Error (3.1.2.11.4), so it must not reach the wire. The upper
+    /// bound is the protocol's own.
+    pub fn max_packet_size(&self) -> Result<u32, String> {
+        match self.max_packet_size {
+            0 => Err("--max-packet-size must be at least 1".into()),
+            n if n > PROTOCOL_MAX_PACKET_SIZE => Err(format!(
+                "--max-packet-size {n} exceeds the protocol maximum {PROTOCOL_MAX_PACKET_SIZE}"
+            )),
+            n => Ok(n),
+        }
+    }
+
     /// The password from whichever source was given. Reading the file here
     /// keeps the "which source wins" question in one place.
+    ///
+    /// Explicit beats ambient: `--password-file`, then `--password` (clap
+    /// rejects the two together), then `PULSEMQ_PASSWORD`. The environment
+    /// comes last so that a variable left in a shell profile cannot quietly
+    /// override the credential someone just typed.
     pub fn password(&self) -> std::io::Result<Option<Vec<u8>>> {
         if let Some(path) = &self.password_file {
+            warn_if_readable_by_others(path);
             let mut bytes = std::fs::read(path)?;
             while matches!(bytes.last(), Some(b'\n' | b'\r')) {
                 bytes.pop();
             }
             return Ok(Some(bytes));
         }
-        Ok(self.password.as_ref().map(|p| p.as_bytes().to_vec()))
+        if let Some(password) = &self.password {
+            return Ok(Some(password.as_bytes().to_vec()));
+        }
+        Ok(std::env::var_os(PASSWORD_ENV_VAR).map(|v| {
+            #[cfg(unix)]
+            {
+                use std::os::unix::ffi::OsStrExt;
+                v.as_bytes().to_vec()
+            }
+            #[cfg(not(unix))]
+            {
+                v.to_string_lossy().into_owned().into_bytes()
+            }
+        }))
     }
 }
 
@@ -379,5 +480,119 @@ mod tests {
         assert_eq!(args.inflight, 100);
         assert_eq!(args.drain, 2);
         assert!(!args.json);
+    }
+
+    fn conn_from(argv: &[&str]) -> ConnectionArgs {
+        match Cli::parse_from(argv).command {
+            Command::Pub(args) => args.conn,
+            _ => panic!("expected the pub subcommand"),
+        }
+    }
+
+    /// The default is the point of the whole option: left at the protocol
+    /// maximum, a broker can declare a 256 MB Remaining Length and make this
+    /// tool allocate that much before sending a single payload byte.
+    #[test]
+    fn the_packet_ceiling_defaults_to_one_mebibyte_not_the_protocol_maximum() {
+        let conn = conn_from(&["pulsemq-cli", "pub", "-t", "x"]);
+        assert_eq!(conn.max_packet_size().unwrap(), 1024 * 1024);
+        assert!(conn.max_packet_size().unwrap() < PROTOCOL_MAX_PACKET_SIZE);
+    }
+
+    #[test]
+    fn the_packet_ceiling_can_be_raised_to_the_protocol_maximum() {
+        let argv_max = PROTOCOL_MAX_PACKET_SIZE.to_string();
+        let conn = conn_from(&[
+            "pulsemq-cli",
+            "pub",
+            "-t",
+            "x",
+            "--max-packet-size",
+            &argv_max,
+        ]);
+        assert_eq!(conn.max_packet_size().unwrap(), PROTOCOL_MAX_PACKET_SIZE);
+    }
+
+    /// Zero is a Protocol Error as a v5 Maximum Packet Size (3.1.2.11.4), so
+    /// it must be refused here rather than encoded onto the wire.
+    #[test]
+    fn a_zero_packet_ceiling_is_refused() {
+        let conn = conn_from(&["pulsemq-cli", "pub", "-t", "x", "--max-packet-size", "0"]);
+        assert!(conn.max_packet_size().is_err());
+    }
+
+    #[test]
+    fn a_packet_ceiling_above_the_protocol_maximum_is_refused() {
+        let over = (PROTOCOL_MAX_PACKET_SIZE + 1).to_string();
+        let conn = conn_from(&["pulsemq-cli", "pub", "-t", "x", "--max-packet-size", &over]);
+        assert!(conn.max_packet_size().is_err());
+    }
+
+    /// Explicit beats ambient: a variable left in a shell profile must not
+    /// override the credential someone just typed.
+    #[test]
+    fn an_explicit_password_wins_over_the_environment() {
+        temp_env_password("from-the-environment", || {
+            let conn = conn_from(&["pulsemq-cli", "pub", "-t", "x", "--password", "typed"]);
+            assert_eq!(conn.password().unwrap().unwrap(), b"typed");
+        });
+    }
+
+    #[test]
+    fn the_environment_supplies_the_password_when_no_flag_does() {
+        temp_env_password("from-the-environment", || {
+            let conn = conn_from(&["pulsemq-cli", "pub", "-t", "x"]);
+            assert_eq!(conn.password().unwrap().unwrap(), b"from-the-environment");
+        });
+    }
+
+    #[test]
+    fn no_flag_and_no_environment_means_no_password() {
+        temp_env_password_unset(|| {
+            let conn = conn_from(&["pulsemq-cli", "pub", "-t", "x"]);
+            assert!(conn.password().unwrap().is_none());
+        });
+    }
+
+    /// `PULSEMQ_PASSWORD` is process-wide state, so these tests must not run
+    /// concurrently with each other. A mutex is enough: they are the only
+    /// readers and writers of it.
+    fn env_lock() -> &'static std::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
+    fn temp_env_password(value: &str, body: impl FnOnce()) {
+        let _guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: the lock above serialises every test that touches this
+        // variable, and nothing else in this binary reads the environment.
+        unsafe { std::env::set_var(PASSWORD_ENV_VAR, value) };
+        body();
+        unsafe { std::env::remove_var(PASSWORD_ENV_VAR) };
+    }
+
+    fn temp_env_password_unset(body: impl FnOnce()) {
+        let _guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { std::env::remove_var(PASSWORD_ENV_VAR) };
+        body();
+    }
+
+    /// A file still wins over both, and its trailing newline is stripped.
+    #[test]
+    fn a_password_file_wins_over_the_environment() {
+        let path = std::env::temp_dir().join(format!("pulsemq-cli-pw-{}", std::process::id()));
+        std::fs::write(&path, b"from-the-file\n").unwrap();
+        temp_env_password("from-the-environment", || {
+            let conn = conn_from(&[
+                "pulsemq-cli",
+                "pub",
+                "-t",
+                "x",
+                "--password-file",
+                path.to_str().unwrap(),
+            ]);
+            assert_eq!(conn.password().unwrap().unwrap(), b"from-the-file");
+        });
+        let _ = std::fs::remove_file(&path);
     }
 }

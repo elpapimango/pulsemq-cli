@@ -17,11 +17,6 @@ use tokio::time::timeout;
 use crate::cli::ConnectionArgs;
 use crate::error::{Error, Result};
 
-/// Client-side limit on an inbound packet, passed to `framing::read_packet`.
-/// 268,435,455 is the protocol maximum; a client has no reason to be stricter
-/// than the broker it is testing.
-pub(crate) const MAX_PACKET_SIZE: u32 = 268_435_455;
-
 /// What the broker granted in CONNACK, for the caller to respect afterwards.
 #[derive(Debug, Clone, Copy)]
 pub struct Negotiated {
@@ -48,6 +43,7 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let version = args.version();
+    let max_packet_size = args.max_packet_size().map_err(Error::Usage)?;
     let password = args
         .password()
         .map_err(|e| Error::Usage(format!("cannot read the password file: {e}")))?;
@@ -61,7 +57,15 @@ where
         protocol_version: version.level(),
         clean_start: args.clean_start(),
         keep_alive: args.keepalive,
-        properties: Default::default(),
+        // Tell the broker the ceiling we enforce locally (3.1.2.11.4), so a
+        // compliant one trims or drops an oversized message rather than
+        // sending something we will refuse mid-frame and disconnect over.
+        // v3.x has no properties; the codec drops these for those versions.
+        properties: {
+            let mut p = crate::mqtt::codec::Properties::new();
+            p.maximum_packet_size = Some(max_packet_size);
+            p
+        },
         client_id: client_id.to_string(),
         will: None,
         username: args.user.clone(),
@@ -69,7 +73,7 @@ where
     };
     write_packet(stream, &Packet::Connect(connect), version).await?;
 
-    match read_packet(stream, MAX_PACKET_SIZE, version).await? {
+    match read_packet(stream, max_packet_size, version).await? {
         ReadOutcome::Packet(Packet::Connack(ack), _) if ack.reason_code == ReasonCode::Success => {
             Ok(Negotiated {
                 version,
@@ -105,6 +109,10 @@ pub struct Client {
     version: ProtocolVersion,
     keep_alive: u16,
     next_packet_id: u16,
+    /// The ceiling this client enforces on an inbound packet, from
+    /// `--max-packet-size`. Held here so every `recv` uses the same one the
+    /// handshake advertised.
+    max_packet_size: u32,
 }
 
 impl Client {
@@ -123,8 +131,9 @@ impl Client {
             ));
         }
 
-        // Read before dialling so a bad --password-file fails instantly
-        // instead of after paying for a TCP handshake (or a connect timeout).
+        // Validate before dialling so bad arguments fail instantly instead of
+        // after paying for a TCP handshake (or a connect timeout).
+        let max_packet_size = args.max_packet_size().map_err(Error::Usage)?;
         args.password()
             .map_err(|e| Error::Usage(format!("cannot read the password file: {e}")))?;
 
@@ -140,6 +149,7 @@ impl Client {
             version: negotiated.version,
             keep_alive: args.keepalive,
             next_packet_id: 0,
+            max_packet_size,
         })
     }
 
@@ -155,7 +165,7 @@ impl Client {
     /// Read one packet, treating a clean close as an error: every caller is
     /// waiting for something specific, so EOF is never the expected outcome.
     pub async fn recv(&mut self) -> Result<Packet> {
-        match read_packet(&mut self.stream, MAX_PACKET_SIZE, self.version).await? {
+        match read_packet(&mut self.stream, self.max_packet_size, self.version).await? {
             ReadOutcome::Packet(p, _) => Ok(p),
             ReadOutcome::Eof => Err(Error::Disconnected("while waiting for a reply".into())),
         }
@@ -218,6 +228,47 @@ mod tests {
     }
 
     /// The handshake runs over any AsyncRead + AsyncWrite, so an in-memory
+    /// The ceiling is only half enforced if the broker is never told: a
+    /// compliant one trims or drops an oversized message when it knows, rather
+    /// than sending something the client refuses mid-frame and disconnects
+    /// over (3.1.2.11.4).
+    #[tokio::test]
+    async fn connect_advertises_the_maximum_packet_size() {
+        let (mut client_side, mut broker_side) = duplex(4096);
+
+        let broker = tokio::spawn(async move {
+            let ReadOutcome::Packet(packet, _) =
+                read_packet(&mut broker_side, 65_535, ProtocolVersion::V5)
+                    .await
+                    .expect("CONNECT decodes")
+            else {
+                panic!("expected a CONNECT, got EOF");
+            };
+            let Packet::Connect(connect) = packet else {
+                panic!("expected a CONNECT");
+            };
+            write_packet(
+                &mut broker_side,
+                &Packet::Connack(Connack::new(false, ReasonCode::Success)),
+                ProtocolVersion::V5,
+            )
+            .await
+            .expect("CONNACK writes");
+            connect.properties.maximum_packet_size
+        });
+
+        let args = connection_args(["pulsemq-cli", "pub", "-t", "x"].as_slice());
+        handshake(&mut client_side, &args, "advertiser")
+            .await
+            .expect("handshake succeeds");
+
+        assert_eq!(
+            broker.await.expect("broker task joins"),
+            Some(crate::cli::DEFAULT_MAX_PACKET_SIZE),
+            "CONNECT must carry the ceiling the client enforces"
+        );
+    }
+
     /// duplex stands in for a socket and the test needs no broker.
     #[tokio::test]
     async fn handshake_returns_the_brokers_receive_maximum() {

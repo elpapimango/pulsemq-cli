@@ -134,7 +134,17 @@ to write, and PINGRESP arrives on the same path. Adding a second writer means
 splitting the stream first.
 
 Payloads are arbitrary bytes: `print_message` writes them to stdout unmodified.
-Do not route output through a lossy UTF-8 conversion.
+Do not route output through a lossy UTF-8 conversion. The single exception is a
+terminal, where `write_payload` escapes control characters — a payload reaching
+a TTY is not just data, it can carry ANSI sequences. A pipe or a redirect still
+gets the exact bytes, so that exception must stay keyed on `IsTerminal` and
+never widen into a general transformation.
+
+Broker-supplied limits are not taken on trust. `ConnectionArgs::max_packet_size`
+is the one ceiling on an inbound packet, enforced locally *and* advertised in
+CONNECT, because `read_packet` sizes its buffer from the length the broker
+declares. Anything new that reads packets takes that value rather than reaching
+for a constant.
 
 `bench` does not use `Client`. It calls `client::handshake` on a `TcpStream`,
 then splits the socket so a publisher can write and read acknowledgements at

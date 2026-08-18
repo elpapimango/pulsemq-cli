@@ -23,7 +23,7 @@ use crate::bench::schedule::Schedule;
 use crate::bench::stats::{Counters, Samples};
 use crate::bench::Config;
 use crate::cli::ConnectionArgs;
-use crate::client::{handshake, MAX_PACKET_SIZE};
+use crate::client::handshake;
 use crate::error::{Error, Result};
 
 /// Send times for the packets this publisher is waiting on.
@@ -50,6 +50,9 @@ pub async fn run(
     stream.set_nodelay(true)?;
     let negotiated = handshake(&mut stream, &conn, &client_id).await?;
     let version = negotiated.version;
+    // Same ceiling the handshake advertised, so every read here agrees with
+    // what the broker was told.
+    let max_packet_size = conn.max_packet_size().map_err(Error::Usage)?;
     // Packet Identifiers are 16-bit, 1..=65535 (2.2.1), so a window wider
     // than that would let two outstanding messages collide on the same id:
     // `in_flight.insert` would silently overwrite the older entry, losing
@@ -78,7 +81,7 @@ pub async fn run(
             // "malformed packet". The cause lives here, so it leaves here.
             let mut read_error: Option<Error> = None;
             loop {
-                let packet = match read_packet(&mut reader, MAX_PACKET_SIZE, version).await {
+                let packet = match read_packet(&mut reader, max_packet_size, version).await {
                     Ok(ReadOutcome::Packet(packet, _)) => packet,
                     // The broker closed its half. Expected once this publisher
                     // has sent DISCONNECT (3.14.4); premature closure shows up

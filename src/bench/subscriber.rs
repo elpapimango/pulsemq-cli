@@ -15,7 +15,7 @@ use crate::bench::payload;
 use crate::bench::stats::{Counters, Samples};
 use crate::bench::Config;
 use crate::cli::ConnectionArgs;
-use crate::client::{handshake, MAX_PACKET_SIZE};
+use crate::client::handshake;
 use crate::error::{Error, Result};
 
 /// Run one subscriber until the stop signal. Returns its end-to-end latency
@@ -39,6 +39,9 @@ pub async fn run(
     stream.set_nodelay(true)?;
     let negotiated = handshake(&mut stream, &conn, &client_id).await?;
     let version = negotiated.version;
+    // Same ceiling the handshake advertised, so every read here agrees with
+    // what the broker was told.
+    let max_packet_size = conn.max_packet_size().map_err(Error::Usage)?;
 
     let subscribe = Subscribe {
         packet_id: 1,
@@ -57,7 +60,7 @@ pub async fn run(
     // until every subscriber is actually subscribed, or the first messages are
     // delivered to nobody and the receive count is wrong.
     loop {
-        match read_packet(&mut stream, MAX_PACKET_SIZE, version).await? {
+        match read_packet(&mut stream, max_packet_size, version).await? {
             ReadOutcome::Packet(Packet::Suback(ack), _) => {
                 // 3.9.3: any Reason Code >= 0x80 is a failed subscription.
                 if let Some(code) = ack.reason_codes.iter().find(|c| c.is_error()) {
@@ -81,7 +84,7 @@ pub async fn run(
             break;
         }
         let read = tokio::select! {
-            read = read_packet(&mut stream, MAX_PACKET_SIZE, version) => read,
+            read = read_packet(&mut stream, max_packet_size, version) => read,
             // `wait_for` resolves once the predicate holds (a real stop
             // request) or the sender is dropped (`Err`). Both cases end the
             // run: breaking here (rather than `continue`) matters because a

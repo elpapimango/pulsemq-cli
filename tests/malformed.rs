@@ -219,3 +219,33 @@ fn round_trip_seeds_still_decode() {
         }
     }
 }
+
+/// A declared Remaining Length is attacker input, and `read_packet` sizes its
+/// buffer from it. The size check must therefore happen *before* the
+/// allocation, or a broker gets to reserve the whole ceiling by sending five
+/// bytes of header and then nothing.
+#[tokio::test]
+async fn an_oversized_declared_length_is_refused_without_allocating_it() {
+    use pulsemq_cli::mqtt::framing::read_packet;
+
+    // PUBLISH with a Remaining Length of 200 MB, and no body at all.
+    let header = [0x30u8, 0x80, 0x80, 0x80, 0x60];
+    let declared = 0x60u32 << 21;
+    assert!(
+        declared > 100 * 1024 * 1024,
+        "the corpus should dwarf the cap"
+    );
+
+    let mut stream = std::io::Cursor::new(header.to_vec());
+    let ceiling = 1024 * 1024;
+    let result = read_packet(&mut stream, ceiling, ProtocolVersion::V5).await;
+
+    match result {
+        Err(e) => assert_eq!(
+            e.reason_code(),
+            pulsemq_cli::mqtt::types::ReasonCode::PacketTooLarge,
+            "wrong reason: {e}"
+        ),
+        Ok(_) => panic!("a packet over the ceiling must be refused"),
+    }
+}
