@@ -98,7 +98,7 @@ fn warn_if_readable_by_others(path: &std::path::Path) {
 fn warn_if_readable_by_others(_path: &std::path::Path) {}
 
 /// How to reach the broker. Flattened into every subcommand.
-#[derive(Args, Debug, Clone)]
+#[derive(Args, Clone)]
 pub struct ConnectionArgs {
     /// Broker hostname or address.
     #[arg(short = 'b', long, default_value = "localhost", value_name = "HOST")]
@@ -143,6 +143,26 @@ pub struct ConnectionArgs {
     /// `--client-id`, since a generated identifier cannot be resumed.
     #[arg(long, requires = "client_id")]
     pub persistent_session: bool,
+}
+
+/// Hand-written rather than derived so a future `{:?}` on parsed args — a
+/// `--verbose` dump, a debug-formatted error — can never put the cleartext
+/// password in a log or a terminal scrollback.
+impl std::fmt::Debug for ConnectionArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionArgs")
+            .field("broker", &self.broker)
+            .field("port", &self.port)
+            .field("client_id", &self.client_id)
+            .field("protocol", &self.protocol)
+            .field("user", &self.user)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .field("password_file", &self.password_file)
+            .field("keepalive", &self.keepalive)
+            .field("max_packet_size", &self.max_packet_size)
+            .field("persistent_session", &self.persistent_session)
+            .finish()
+    }
 }
 
 impl ConnectionArgs {
@@ -552,6 +572,20 @@ mod tests {
             let conn = conn_from(&["pulsemq-cli", "pub", "-t", "x"]);
             assert!(conn.password().unwrap().is_none());
         });
+    }
+
+    /// Regression: `Debug` is hand-written specifically so a future
+    /// `{:?}`-dumped `ConnectionArgs` (a `--verbose` flag, a debug-formatted
+    /// error) can never put the cleartext password in a log.
+    #[test]
+    fn debug_formatting_never_shows_the_password() {
+        let conn = conn_from(&["pulsemq-cli", "pub", "-t", "x", "--password", "s3cret"]);
+        let debug = format!("{conn:?}");
+        assert!(
+            !debug.contains("s3cret"),
+            "password leaked into Debug output: {debug}"
+        );
+        assert!(debug.contains("<redacted>"), "debug output was: {debug}");
     }
 
     /// `PULSEMQ_PASSWORD` is process-wide state, so these tests must not run

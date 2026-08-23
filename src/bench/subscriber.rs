@@ -105,11 +105,19 @@ pub async fn run(
 
                 // A message whose payload carries no header is counted, not
                 // timed: `payload::decode` returns `None` for any message
-                // this run did not publish with a header.
+                // this run did not publish with a header. `elapsed_ns` is a
+                // `u64` read straight from that payload — the broker's word,
+                // or cross-talk from another run sharing this topic prefix —
+                // so `checked_add` stands in for `+`: `Instant` addition
+                // panics on overflow, and an implausible header must be
+                // treated the same as no header rather than crash the task.
                 if let Some(header) = payload::decode(&p.payload) {
-                    let sent_at = baseline + Duration::from_nanos(header.elapsed_ns);
-                    if sent_at >= warmup_until && received_at >= sent_at {
-                        samples.record(received_at.duration_since(sent_at).as_nanos() as u64);
+                    if let Some(sent_at) =
+                        baseline.checked_add(Duration::from_nanos(header.elapsed_ns))
+                    {
+                        if sent_at >= warmup_until && received_at >= sent_at {
+                            samples.record(received_at.duration_since(sent_at).as_nanos() as u64);
+                        }
                     }
                 }
 
@@ -381,6 +389,97 @@ mod tests {
             samples.len(),
             0,
             "a headerless message is counted, not timed"
+        );
+        tokio::time::timeout(TEST_TIMEOUT, broker)
+            .await
+            .expect("broker task does not hang")
+            .expect("broker task");
+    }
+
+    /// Regression: `elapsed_ns` comes straight from the payload, which a
+    /// hostile broker (or cross-talk from another run on the same topic
+    /// prefix) fully controls. `u64::MAX` nanoseconds pushed `baseline +
+    /// Duration::from_nanos(..)` past what `Instant` can represent and
+    /// panicked; the message must instead be counted and left untimed, the
+    /// same as a payload with no header at all.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_header_with_an_unrepresentable_elapsed_time_does_not_panic() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let baseline = Instant::now();
+        let broker = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let version = ProtocolVersion::V5;
+            let _ = read_packet(&mut stream, 65_535, version).await;
+            write_packet(
+                &mut stream,
+                &Packet::Connack(Connack::new(false, ReasonCode::Success)),
+                version,
+            )
+            .await
+            .expect("CONNACK");
+            let ReadOutcome::Packet(Packet::Subscribe(sub), _) =
+                read_packet(&mut stream, 65_535, version)
+                    .await
+                    .expect("SUBSCRIBE")
+            else {
+                panic!("expected a SUBSCRIBE");
+            };
+            write_packet(
+                &mut stream,
+                &Packet::Suback(SubAck::new(sub.packet_id, vec![ReasonCode::Success])),
+                version,
+            )
+            .await
+            .expect("SUBACK");
+            let body = payload::build(
+                64,
+                Header {
+                    elapsed_ns: u64::MAX,
+                    publisher: 0,
+                    seq: 0,
+                },
+            );
+            let publish = Publish {
+                dup: false,
+                qos: crate::mqtt::types::QoS::AtMostOnce,
+                retain: false,
+                topic: "bench/0".into(),
+                packet_id: None,
+                properties: Default::default(),
+                payload: body.into(),
+            };
+            write_packet(&mut stream, &Packet::Publish(publish), version)
+                .await
+                .expect("PUBLISH");
+        });
+
+        let config = Arc::new(config_for(&["pulsemq-cli", "bench", "--subscribers", "1"]));
+        let counters = Arc::new(Counters::default());
+        let (tx, stop) = watch::channel(false);
+        let handle = tokio::spawn(run(
+            0,
+            config,
+            connection_args(port),
+            counters.clone(),
+            baseline,
+            baseline,
+            stop,
+        ));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        tx.send(true).expect("stop signal");
+
+        let samples = tokio::time::timeout(TEST_TIMEOUT, handle)
+            .await
+            .expect("subscriber stops promptly")
+            .expect("task joins, i.e. did not panic")
+            .expect("subscriber completes");
+
+        assert_eq!(counters.received.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            samples.len(),
+            0,
+            "an implausible header is counted, not timed"
         );
         tokio::time::timeout(TEST_TIMEOUT, broker)
             .await
