@@ -1,14 +1,7 @@
 # TODO
 
-Ordered. Pick the top item.
-
-## 1. End-to-end tests
-
-Spawn a broker — `../pulsemq` if one is checked out, otherwise any
-spec-conformant one — then assert the publish/subscribe and request/reply round
-trips. The smoke test in `CLAUDE.md` covers this by hand today. The broker stays
-a test fixture, discovered at run time; it must not become a build dependency
-again.
+Nothing outstanding. See "Done" below for history; add new items above this
+line when they come up.
 
 ## Done
 
@@ -120,3 +113,17 @@ again.
   `tls`/`websocket` feature code is actually compiled and tested in CI, not
   only locally), and a `windows-latest` job (fmt/clippy/test, default
   features) so `cli.rs`'s `#[cfg(not(unix))]` branch runs somewhere.
+- **End-to-end tests** — `tests/e2e.rs`. `../pulsemq`, when a sibling
+  checkout exists, is built (`cargo build --manifest-path`) and spawned on a
+  scratch port at test *run* time by a `Command` inside the test — not a
+  build step, so it stays exactly the discovered-not-depended-on fixture
+  `CLAUDE.md` describes; no sibling checkout means both tests print why and
+  return immediately rather than failing. `publish_reaches_a_waiting_subscriber`
+  runs `publish::run`/`subscribe::run` against the real broker;
+  `request_receives_a_responders_reply` runs `request::run` against a
+  hand-rolled responder built from `Client`/`subscribe::subscribe`/
+  `subscribe::acknowledge`, since nothing in this crate already plays that
+  role. Both passed against the actual sibling checkout while landing this
+  item, not merely against the skip path. `Broker` kills and reaps its child
+  on drop, the same idiom `bench/publisher.rs`'s own tests already use for a
+  spawned process.
