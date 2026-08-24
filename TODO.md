@@ -18,15 +18,7 @@ missing.
 User properties, message expiry, content type and payload format indicator on
 `pub`, plus printing the received ones under `sub --show-topic`.
 
-## 4. WebSocket transport
-
-`ws://` and `wss://`. The handshake must offer the `mqtt` subprotocol or the
-server rejects it at the HTTP layer, before any MQTT packet is exchanged.
-`Client` holds a concrete `TcpStream` and has to become generic over the stream
-first. `bench` already sidesteps this by calling `client::handshake` on the
-socket directly, so the abstraction that lands here should serve both.
-
-## 5. End-to-end tests
+## 4. End-to-end tests
 
 Spawn a broker — `../pulsemq` if one is checked out, otherwise any
 spec-conformant one — then assert the publish/subscribe and request/reply round
@@ -34,13 +26,13 @@ trips. The smoke test in `CLAUDE.md` covers this by hand today. The broker stays
 a test fixture, discovered at run time; it must not become a build dependency
 again.
 
-## 6. QoS 2 in bench mode
+## 5. QoS 2 in bench mode
 
 `bench` accepts QoS 0 and 1 only. QoS 2 needs the PUBREL written from the send
 side while the ack side owns the read half; the plan for that is a small mpsc
 of packet identifiers awaiting PUBREL, drained between publishes.
 
-## 7. CI: dependency audit and non-Linux coverage
+## 6. CI: dependency audit and non-Linux coverage
 
 `.github/workflows/ci.yml` runs fmt/clippy/build/test/offline-build, all on
 `ubuntu-latest`. Two gaps:
@@ -53,7 +45,7 @@ of packet identifiers awaiting PUBREL, drained between publishes.
   password-file warning, environment variable byte handling) has no CI runner
   that exercises the `not(unix)` branch, so it can silently rot.
 
-## 8. Stale comment in `src/mqtt/packet/publish.rs`
+## 7. Stale comment in `src/mqtt/packet/publish.rs`
 
 The doc comment on `Publish::payload` (lines 21–26) describes broker-only
 behaviour that does not exist in this crate — "routing builds one `Publish`
@@ -110,8 +102,24 @@ longer applies here.
   Landed alongside it: `src/transport.rs`, a new `Stream` abstraction (plain
   TCP or TLS behind one `AsyncRead`/`AsyncWrite`) that both `Client` and
   `bench` now dial through, replacing each one's own direct `TcpStream`
-  handling — the refactor TODO's WebSocket item asked for, done once so
-  WebSocket can reuse it rather than repeating it. `bench`'s split keeps
+  handling — the refactor the WebSocket item below needed, done once so
+  WebSocket could reuse it rather than repeating it. `bench`'s split keeps
   `TcpStream::into_split()`'s zero-cost path for the plain case and only
   pays `tokio::io::split`'s generic (mutex-backed) path when TLS is active,
   so the harness doesn't add overhead to what it measures.
+- **WebSocket transport** — `--websocket` (`ws://`, or `wss://` combined
+  with `--tls`). The Upgrade request offers the `mqtt` subprotocol via
+  `tungstenite::ClientRequestBuilder`; a broker that doesn't echo it back
+  fails the handshake before any MQTT packet exists (verified by test
+  against a real client/server handshake, not just by inspecting the
+  request). `src/transport/ws.rs`'s `WsByteStream<S>` adapts
+  `tokio_tungstenite`'s `WebSocketStream` (a `Stream`/`Sink` of discrete
+  messages) to `AsyncRead`/`AsyncWrite`, on the same one-packet-per-flush
+  assumption `framing::write_packet` already makes: one flushed write
+  becomes one WebSocket Binary frame. `wss://` composes by TLS-wrapping the
+  socket first (reusing item 2's `transport::tls::wrap`) and handing that
+  already-connected stream to the WebSocket upgrade — `tokio-tungstenite`
+  never dials or verifies a certificate itself. `tokio-tungstenite` and
+  `futures-util` sit behind a non-default `websocket` Cargo feature, with no
+  bundled TLS connector (`default-features = false`), so `--all-features`
+  pulls in exactly one TLS stack, not two.

@@ -170,6 +170,14 @@ pub struct ConnectionArgs {
     #[cfg(feature = "tls")]
     #[arg(long, requires = "tls")]
     pub insecure: bool,
+
+    /// Connect over WebSocket (`ws://`, or `wss://` combined with --tls).
+    /// The Upgrade request offers the `mqtt` subprotocol, as the spec
+    /// requires; a server that doesn't recognise it rejects the connection
+    /// at the HTTP layer, before any MQTT packet is exchanged.
+    #[cfg(feature = "websocket")]
+    #[arg(long)]
+    pub websocket: bool,
 }
 
 /// Hand-written rather than derived so a future `{:?}` on parsed args — a
@@ -194,6 +202,8 @@ impl std::fmt::Debug for ConnectionArgs {
             .field("cert", &self.cert)
             .field("key", &self.key)
             .field("insecure", &self.insecure);
+        #[cfg(feature = "websocket")]
+        d.field("websocket", &self.websocket);
         d.finish()
     }
 }

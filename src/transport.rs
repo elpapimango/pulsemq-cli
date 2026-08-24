@@ -1,10 +1,11 @@
 //! The byte stream a `Client` or a `bench` connection actually talks over:
-//! plain TCP, or (behind the `tls` feature) TLS / mutual TLS.
+//! plain TCP, TLS / mutual TLS (feature `tls`), WebSocket (feature
+//! `websocket`), or both together for `wss://`.
 //!
 //! `Client` and `bench` both used to dial a bare `TcpStream` directly. This
-//! module is the one place that dials now, so a transport added here (this
-//! one, or WebSocket later) serves both call sites instead of being wired
-//! into each separately (see TODO.md item 6, which asked for exactly this).
+//! module is the one place that dials now, so a transport added here serves
+//! both call sites instead of being wired into each separately (TODO.md's
+//! WebSocket item asked for exactly this).
 
 use std::io;
 use std::pin::Pin;
@@ -18,6 +19,8 @@ use crate::error::Result;
 
 #[cfg(feature = "tls")]
 mod tls;
+#[cfg(feature = "websocket")]
+mod ws;
 
 /// A connected transport, hiding which one behind a uniform
 /// `AsyncRead`/`AsyncWrite`. Every variant wraps an already-connected,
@@ -28,6 +31,10 @@ pub enum Stream {
     Tcp(TcpStream),
     #[cfg(feature = "tls")]
     Tls(Box<tokio_rustls::client::TlsStream<TcpStream>>),
+    #[cfg(feature = "websocket")]
+    Ws(Box<ws::WsByteStream<TcpStream>>),
+    #[cfg(all(feature = "tls", feature = "websocket"))]
+    Wss(Box<ws::WsByteStream<tokio_rustls::client::TlsStream<TcpStream>>>),
 }
 
 impl AsyncRead for Stream {
@@ -40,6 +47,10 @@ impl AsyncRead for Stream {
             Stream::Tcp(s) => Pin::new(s).poll_read(cx, buf),
             #[cfg(feature = "tls")]
             Stream::Tls(s) => Pin::new(s).poll_read(cx, buf),
+            #[cfg(feature = "websocket")]
+            Stream::Ws(s) => Pin::new(s).poll_read(cx, buf),
+            #[cfg(all(feature = "tls", feature = "websocket"))]
+            Stream::Wss(s) => Pin::new(s).poll_read(cx, buf),
         }
     }
 }
@@ -54,6 +65,10 @@ impl AsyncWrite for Stream {
             Stream::Tcp(s) => Pin::new(s).poll_write(cx, buf),
             #[cfg(feature = "tls")]
             Stream::Tls(s) => Pin::new(s).poll_write(cx, buf),
+            #[cfg(feature = "websocket")]
+            Stream::Ws(s) => Pin::new(s).poll_write(cx, buf),
+            #[cfg(all(feature = "tls", feature = "websocket"))]
+            Stream::Wss(s) => Pin::new(s).poll_write(cx, buf),
         }
     }
 
@@ -62,6 +77,10 @@ impl AsyncWrite for Stream {
             Stream::Tcp(s) => Pin::new(s).poll_flush(cx),
             #[cfg(feature = "tls")]
             Stream::Tls(s) => Pin::new(s).poll_flush(cx),
+            #[cfg(feature = "websocket")]
+            Stream::Ws(s) => Pin::new(s).poll_flush(cx),
+            #[cfg(all(feature = "tls", feature = "websocket"))]
+            Stream::Wss(s) => Pin::new(s).poll_flush(cx),
         }
     }
 
@@ -70,6 +89,10 @@ impl AsyncWrite for Stream {
             Stream::Tcp(s) => Pin::new(s).poll_shutdown(cx),
             #[cfg(feature = "tls")]
             Stream::Tls(s) => Pin::new(s).poll_shutdown(cx),
+            #[cfg(feature = "websocket")]
+            Stream::Ws(s) => Pin::new(s).poll_shutdown(cx),
+            #[cfg(all(feature = "tls", feature = "websocket"))]
+            Stream::Wss(s) => Pin::new(s).poll_shutdown(cx),
         }
     }
 }
@@ -101,12 +124,23 @@ impl Stream {
                 let (r, w) = tokio::io::split(*s);
                 (Box::new(r), Box::new(w))
             }
+            #[cfg(feature = "websocket")]
+            Stream::Ws(s) => {
+                let (r, w) = tokio::io::split(*s);
+                (Box::new(r), Box::new(w))
+            }
+            #[cfg(all(feature = "tls", feature = "websocket"))]
+            Stream::Wss(s) => {
+                let (r, w) = tokio::io::split(*s);
+                (Box::new(r), Box::new(w))
+            }
         }
     }
 }
 
-/// Dial the broker and return a connected transport: plain TCP, or TLS when
-/// `--tls` is set. The one place `Client` and `bench` both call to connect.
+/// Dial the broker and return a connected transport, composing `--tls` and
+/// `--websocket` as the flags say. The one place `Client` and `bench` both
+/// call to connect.
 pub async fn connect(args: &ConnectionArgs) -> Result<Stream> {
     #[cfg(feature = "tls")]
     args.warn_if_plaintext_password();
@@ -118,9 +152,27 @@ pub async fn connect(args: &ConnectionArgs) -> Result<Stream> {
     // rather than replace it.
     stream.set_nodelay(true)?;
 
+    // wss:// first: --tls wraps the socket, then --websocket upgrades over
+    // that already-TLS-wrapped stream — WebSocket never dials or verifies a
+    // certificate itself, it only ever sees a stream this function already
+    // finished connecting.
+    #[cfg(all(feature = "tls", feature = "websocket"))]
+    if args.tls && args.websocket {
+        let tls_stream = tls::wrap(stream, args).await?;
+        return ws::wrap(tls_stream, args)
+            .await
+            .map(Box::new)
+            .map(Stream::Wss);
+    }
+
     #[cfg(feature = "tls")]
     if args.tls {
         return tls::wrap(stream, args).await.map(Box::new).map(Stream::Tls);
+    }
+
+    #[cfg(feature = "websocket")]
+    if args.websocket {
+        return ws::wrap(stream, args).await.map(Box::new).map(Stream::Ws);
     }
 
     Ok(Stream::Tcp(stream))
