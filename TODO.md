@@ -10,19 +10,6 @@ trips. The smoke test in `CLAUDE.md` covers this by hand today. The broker stays
 a test fixture, discovered at run time; it must not become a build dependency
 again.
 
-## 2. CI: dependency audit and non-Linux coverage
-
-`.github/workflows/ci.yml` runs fmt/clippy/build/test/offline-build, all on
-`ubuntu-latest`. Two gaps:
-
-- No RustSec check (`cargo audit` or `cargo deny`) on the dependency tree, so
-  a known-vulnerable transitive dependency (tokio, clap, serde_json,
-  tokio-rustls and friends behind `--features tls`) is not gated in CI, only
-  caught by hand.
-- The `#[cfg(unix)]` / `#[cfg(not(unix))]` split in `cli.rs` (world-readable
-  password-file warning, environment variable byte handling) has no CI runner
-  that exercises the `not(unix)` branch, so it can silently rot.
-
 ## Done
 
 - **Performance testing mode** — `bench` subcommand: N publishers and
@@ -127,3 +114,9 @@ again.
   permit, record a sample" logic — is now shared between PUBACK (QoS 1)
   and PUBCOMP (QoS 2, or an erroring PUBREC, which 4.3.3 says ends the flow
   without a PUBREL). `Config::from_args` no longer rejects `--qos 2`.
+- **CI: dependency audit and non-Linux coverage** — `.github/workflows/ci.yml`
+  gained an `audit` job (`rustsec/audit-check`, gates on the RustSec advisory
+  database), `--all-features` variants of the build/test steps (so the
+  `tls`/`websocket` feature code is actually compiled and tested in CI, not
+  only locally), and a `windows-latest` job (fmt/clippy/test, default
+  features) so `cli.rs`'s `#[cfg(not(unix))]` branch runs somewhere.

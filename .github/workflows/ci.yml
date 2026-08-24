@@ -39,10 +39,52 @@ jobs:
       - name: Test
         run: cargo test --locked --verbose
 
+      # The four gates above run with default features, so the tls and
+      # websocket feature code (behind non-default Cargo features precisely
+      # so the plain build's dependency tree stays untouched) is otherwise
+      # never actually compiled or tested in CI, only locally by hand.
+      - name: Build (all features)
+        run: cargo build --locked --all-features --verbose
+
+      - name: Test (all features)
+        run: cargo test --locked --all-features --verbose
+
       # This crate has no dependency on the PulseMQ broker: no path
       # dependency, no sibling checkout, no vendored build step. `--offline`
       # after a `--locked` fetch proves the whole build resolves from
       # Cargo.lock alone, so a re-coupling would fail here rather than in
-      # someone's fresh clone.
+      # someone's fresh clone. Runs with --all-features too, for the same
+      # reason the build/test steps above do.
       - name: Build offline (no broker checkout)
-        run: cargo build --offline --verbose
+        run: cargo build --offline --all-features --verbose
+
+  audit:
+    name: RustSec advisory audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # cli.rs has a #[cfg(unix)] / #[cfg(not(unix))] split (the world-readable
+  # password-file warning, PULSEMQ_PASSWORD's byte handling) that the
+  # ubuntu-only job above never exercises. Default features only: the point
+  # is the cfg(not(unix)) branch, not a full cross-platform feature matrix,
+  # and TLS/WebSocket bring in platform-specific bits (e.g. the Windows
+  # certificate store via rustls-native-certs) that are a separate concern.
+  windows:
+    name: build · test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: Rustfmt (check)
+        run: cargo fmt --all -- --check
+      - name: Clippy (deny warnings)
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --locked --verbose
