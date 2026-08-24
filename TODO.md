@@ -2,23 +2,18 @@
 
 Ordered. Pick the top item.
 
-## 1. Payload sources
-
-`--file FILE` and a stdin mode (whole input, or a message per line) for `pub`,
-so a script can pipe into it. Today only `--message` exists.
-
-## 2. Will message
+## 1. Will message
 
 `--will-topic`, `--will-payload`, `--will-qos`, `--will-retain`. `packet::Will`
 already carries them; only the flags and the wiring into `Client::connect` are
 missing.
 
-## 3. v5 properties
+## 2. v5 properties
 
 User properties, message expiry, content type and payload format indicator on
 `pub`, plus printing the received ones under `sub --show-topic`.
 
-## 4. End-to-end tests
+## 3. End-to-end tests
 
 Spawn a broker — `../pulsemq` if one is checked out, otherwise any
 spec-conformant one — then assert the publish/subscribe and request/reply round
@@ -26,13 +21,13 @@ trips. The smoke test in `CLAUDE.md` covers this by hand today. The broker stays
 a test fixture, discovered at run time; it must not become a build dependency
 again.
 
-## 5. QoS 2 in bench mode
+## 4. QoS 2 in bench mode
 
 `bench` accepts QoS 0 and 1 only. QoS 2 needs the PUBREL written from the send
 side while the ack side owns the read half; the plan for that is a small mpsc
 of packet identifiers awaiting PUBREL, drained between publishes.
 
-## 6. CI: dependency audit and non-Linux coverage
+## 5. CI: dependency audit and non-Linux coverage
 
 `.github/workflows/ci.yml` runs fmt/clippy/build/test/offline-build, all on
 `ubuntu-latest`. Two gaps:
@@ -45,7 +40,7 @@ of packet identifiers awaiting PUBREL, drained between publishes.
   password-file warning, environment variable byte handling) has no CI runner
   that exercises the `not(unix)` branch, so it can silently rot.
 
-## 7. Stale comment in `src/mqtt/packet/publish.rs`
+## 6. Stale comment in `src/mqtt/packet/publish.rs`
 
 The doc comment on `Publish::payload` (lines 21–26) describes broker-only
 behaviour that does not exist in this crate — "routing builds one `Publish`
@@ -117,9 +112,14 @@ longer applies here.
   messages) to `AsyncRead`/`AsyncWrite`, on the same one-packet-per-flush
   assumption `framing::write_packet` already makes: one flushed write
   becomes one WebSocket Binary frame. `wss://` composes by TLS-wrapping the
-  socket first (reusing item 2's `transport::tls::wrap`) and handing that
-  already-connected stream to the WebSocket upgrade — `tokio-tungstenite`
+  socket first (reusing the TLS support above's `transport::tls::wrap`) and
+  handing that already-connected stream to the WebSocket upgrade — `tokio-tungstenite`
   never dials or verifies a certificate itself. `tokio-tungstenite` and
   `futures-util` sit behind a non-default `websocket` Cargo feature, with no
   bundled TLS connector (`default-features = false`), so `--all-features`
   pulls in exactly one TLS stack, not two.
+- **Payload sources** — `pub --file FILE` (`-` reads stdin as one payload)
+  and `pub --stdin-lines` (one PUBLISH per line, all over the one connection
+  `run` opens, not a reconnect per line). The per-message send-and-ack logic
+  is now `publish_one`, factored out of `run` so both the single-payload
+  path and the line loop share it.

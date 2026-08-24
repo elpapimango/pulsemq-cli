@@ -322,9 +322,21 @@ pub struct PubArgs {
     #[arg(short = 't', long)]
     pub topic: String,
 
-    /// Message payload. Omitted, the payload is empty.
-    #[arg(short = 'm', long, value_name = "PAYLOAD")]
+    /// Message payload. Omitted (and without --file or --stdin-lines), the
+    /// payload is empty.
+    #[arg(short = 'm', long, value_name = "PAYLOAD", conflicts_with_all = ["file", "stdin_lines"])]
     pub message: Option<String>,
+
+    /// Read the payload from this file, or from stdin if FILE is `-`.
+    /// Publishes once, sending the whole file as one message.
+    #[arg(long, value_name = "FILE", conflicts_with = "stdin_lines")]
+    pub file: Option<std::path::PathBuf>,
+
+    /// Read stdin line by line, publishing one message per line over a
+    /// single connection. The trailing newline of each line is stripped;
+    /// nothing else about the line is interpreted.
+    #[arg(long)]
+    pub stdin_lines: bool,
 
     /// Quality of Service: 0, 1 or 2.
     #[arg(short = 'q', long, default_value_t = 0, value_parser = clap::value_parser!(u8).range(0..=2))]

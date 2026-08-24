@@ -1,4 +1,9 @@
 //! `pulsemq-cli pub` — publish one message, complete its QoS handshake, exit.
+//! With `--file` or `--stdin-lines`, the payload comes from somewhere other
+//! than `--message`; `--stdin-lines` publishes once per line, all over one
+//! connection.
+
+use std::io::{BufRead, Read};
 
 use crate::mqtt::packet::{Packet, Publish};
 use crate::mqtt::types::{QoS, ReasonCode};
@@ -7,12 +12,81 @@ use crate::cli::PubArgs;
 use crate::client::Client;
 use crate::error::{Error, Result};
 
+/// Where the payload (or payloads) to publish come from, resolved once from
+/// `PubArgs` before any connection is opened.
+enum PayloadSource {
+    /// One payload, one PUBLISH.
+    Once(Vec<u8>),
+    /// One PUBLISH per line of stdin, over the one connection `run` opens.
+    /// Reading stdin synchronously between publishes is fine on the
+    /// current-thread runtime `pub` runs on (CLAUDE.md: `pub`, `sub` and
+    /// `request` do one thing at a time) — nothing else needs to run on
+    /// this thread while a line is awaited. A caveat that follows from the
+    /// same design: unlike `sub`, this loop never sends PINGREQ, so a
+    /// producer slow enough to idle past the broker's keep-alive interval
+    /// between lines can still see the connection dropped.
+    Lines,
+}
+
+fn resolve_payload(args: &PubArgs) -> Result<PayloadSource> {
+    if args.stdin_lines {
+        return Ok(PayloadSource::Lines);
+    }
+    if let Some(path) = &args.file {
+        let bytes = if path.as_os_str() == "-" {
+            let mut buf = Vec::new();
+            std::io::stdin()
+                .read_to_end(&mut buf)
+                .map_err(|e| Error::Usage(format!("reading stdin: {e}")))?;
+            buf
+        } else {
+            std::fs::read(path).map_err(|e| Error::Usage(format!("{}: {e}", path.display())))?
+        };
+        return Ok(PayloadSource::Once(bytes));
+    }
+    Ok(PayloadSource::Once(
+        args.message.as_deref().unwrap_or("").as_bytes().to_vec(),
+    ))
+}
+
 pub async fn run(args: PubArgs) -> Result<()> {
     let qos = QoS::from_u8(args.qos)?;
-    let payload: Vec<u8> = args.message.as_deref().unwrap_or("").as_bytes().to_vec();
+    let source = resolve_payload(&args)?;
 
     let mut client = Client::connect(&args.conn).await?;
 
+    match source {
+        PayloadSource::Once(payload) => {
+            publish_one(&mut client, &args.topic, payload, qos, args.retain).await?;
+        }
+        PayloadSource::Lines => {
+            for line in std::io::stdin().lock().lines() {
+                let line = line.map_err(|e| Error::Usage(format!("reading stdin: {e}")))?;
+                publish_one(
+                    &mut client,
+                    &args.topic,
+                    line.into_bytes(),
+                    qos,
+                    args.retain,
+                )
+                .await?;
+            }
+        }
+    }
+
+    client.disconnect().await
+}
+
+/// Publish one message and, for QoS 1/2, complete the acknowledgement
+/// handshake before returning — the same sequence `run` used to perform
+/// inline, factored out so `--stdin-lines` can repeat it per line.
+async fn publish_one(
+    client: &mut Client,
+    topic: &str,
+    payload: Vec<u8>,
+    qos: QoS,
+    retain: bool,
+) -> Result<()> {
     let packet_id = match qos {
         QoS::AtMostOnce => None,
         _ => Some(client.next_packet_id()),
@@ -20,34 +94,34 @@ pub async fn run(args: PubArgs) -> Result<()> {
     let publish = Publish {
         dup: false,
         qos,
-        retain: args.retain,
-        topic: args.topic.clone(),
+        retain,
+        topic: topic.to_string(),
         packet_id,
         properties: Default::default(),
         payload: payload.into(),
     };
     client.send(&Packet::Publish(publish)).await?;
 
-    // QoS 0 is fire-and-forget; 1 and 2 must finish their handshake before the
-    // process exits, or the broker sees an incomplete delivery.
+    // QoS 0 is fire-and-forget; 1 and 2 must finish their handshake before
+    // the next publish (or the process exits), or the broker sees an
+    // incomplete delivery.
     match qos {
         QoS::AtMostOnce => {}
         QoS::AtLeastOnce => {
-            let ack = expect_ack(&mut client, "publish").await?;
+            let ack = expect_ack(client, "publish").await?;
             check(ack, "publish")?;
         }
         QoS::ExactlyOnce => {
-            let rec = expect_ack(&mut client, "publish").await?;
+            let rec = expect_ack(client, "publish").await?;
             check(rec, "publish")?;
             let id = packet_id.expect("QoS 2 always allocates a packet identifier");
             let pubrel = crate::mqtt::packet::PubAck::new(id, ReasonCode::Success);
             client.send(&Packet::Pubrel(pubrel)).await?;
-            let comp = expect_ack(&mut client, "publish").await?;
+            let comp = expect_ack(client, "publish").await?;
             check(comp, "publish")?;
         }
     }
-
-    client.disconnect().await
+    Ok(())
 }
 
 /// Read until the next acknowledgement packet, ignoring anything the broker
@@ -83,5 +157,154 @@ fn check(code: ReasonCode, what: &str) -> Result<()> {
         })
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mqtt::framing::{read_packet, write_packet, ReadOutcome};
+    use crate::mqtt::packet::Connack;
+    use crate::mqtt::types::ProtocolVersion;
+    use clap::Parser;
+    use tokio::net::TcpListener;
+    use tokio::time::Duration;
+
+    fn pub_args(argv: &[&str]) -> PubArgs {
+        match crate::cli::Cli::parse_from(argv).command {
+            crate::cli::Command::Pub(args) => args,
+            _ => panic!("expected the pub subcommand"),
+        }
+    }
+
+    fn conn_args(port: u16) -> crate::cli::ConnectionArgs {
+        let port = port.to_string();
+        pub_args(&[
+            "pulsemq-cli",
+            "pub",
+            "-t",
+            "x",
+            "-b",
+            "127.0.0.1",
+            "-p",
+            &port,
+        ])
+        .conn
+    }
+
+    const TEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+    /// A broker stub: accepts one connection, replies CONNACK and a
+    /// Success PUBACK to every PUBLISH it sees, and returns every PUBLISH
+    /// it collected once the client disconnects.
+    async fn collect_publishes(listener: TcpListener) -> Vec<Publish> {
+        let (mut stream, _) = listener.accept().await.expect("accept");
+        let version = ProtocolVersion::V5;
+        let ReadOutcome::Packet(Packet::Connect(_), _) = read_packet(&mut stream, 65_535, version)
+            .await
+            .expect("CONNECT")
+        else {
+            panic!("expected a CONNECT");
+        };
+        write_packet(
+            &mut stream,
+            &Packet::Connack(Connack::new(false, ReasonCode::Success)),
+            version,
+        )
+        .await
+        .expect("CONNACK");
+
+        let mut received = Vec::new();
+        loop {
+            match read_packet(&mut stream, 65_535, version).await {
+                Ok(ReadOutcome::Packet(Packet::Publish(p), _)) => {
+                    if let Some(id) = p.packet_id {
+                        let ack = crate::mqtt::packet::PubAck::new(id, ReasonCode::Success);
+                        write_packet(&mut stream, &Packet::Puback(ack), version)
+                            .await
+                            .expect("PUBACK");
+                    }
+                    received.push(p);
+                }
+                Ok(ReadOutcome::Packet(Packet::Disconnect(_), _)) | Ok(ReadOutcome::Eof) => break,
+                Ok(ReadOutcome::Packet(_, _)) => continue,
+                Err(_) => break,
+            }
+        }
+        received
+    }
+
+    /// Regression: `--stdin-lines` publishes multiple messages over the one
+    /// connection `run` opens, rather than reconnecting per line. This
+    /// exercises that behavior directly through `publish_one` — the
+    /// function the per-line loop calls — without needing real stdin.
+    #[tokio::test]
+    async fn multiple_publishes_reuse_one_connection() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let broker = tokio::spawn(collect_publishes(listener));
+
+        let mut client = Client::connect(&conn_args(port))
+            .await
+            .expect("client connects");
+        for payload in [b"one".to_vec(), b"two".to_vec(), b"three".to_vec()] {
+            publish_one(&mut client, "x", payload, QoS::AtLeastOnce, false)
+                .await
+                .expect("publish_one succeeds");
+        }
+        client.disconnect().await.expect("disconnect");
+
+        let received = tokio::time::timeout(TEST_TIMEOUT, broker)
+            .await
+            .expect("broker task does not hang")
+            .expect("broker task");
+        assert_eq!(received.len(), 3);
+        assert_eq!(received[0].payload.as_ref(), b"one");
+        assert_eq!(received[1].payload.as_ref(), b"two");
+        assert_eq!(received[2].payload.as_ref(), b"three");
+    }
+
+    #[test]
+    fn file_reads_the_payload_from_disk() {
+        let path =
+            std::env::temp_dir().join(format!("pulsemq-cli-pub-file-{}", std::process::id()));
+        std::fs::write(&path, b"from a file").unwrap();
+        let args = pub_args(&[
+            "pulsemq-cli",
+            "pub",
+            "-t",
+            "x",
+            "--file",
+            path.to_str().unwrap(),
+        ]);
+        let PayloadSource::Once(payload) = resolve_payload(&args).unwrap() else {
+            panic!("expected a single payload");
+        };
+        assert_eq!(payload, b"from a file");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn message_and_file_conflict_at_the_clap_layer() {
+        assert!(crate::cli::Cli::try_parse_from([
+            "pulsemq-cli",
+            "pub",
+            "-t",
+            "x",
+            "-m",
+            "hi",
+            "--file",
+            "/tmp/whatever",
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn no_source_means_an_empty_payload() {
+        let args = pub_args(&["pulsemq-cli", "pub", "-t", "x"]);
+        let PayloadSource::Once(payload) = resolve_payload(&args).unwrap() else {
+            panic!("expected a single payload");
+        };
+        assert!(payload.is_empty());
     }
 }
