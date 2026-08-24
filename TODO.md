@@ -29,18 +29,6 @@ of packet identifiers awaiting PUBREL, drained between publishes.
   password-file warning, environment variable byte handling) has no CI runner
   that exercises the `not(unix)` branch, so it can silently rot.
 
-## 4. Stale comment in `src/mqtt/packet/publish.rs`
-
-The doc comment on `Publish::payload` (lines 21–26) describes broker-only
-behaviour that does not exist in this crate — "routing builds one `Publish`
-per recipient", "fan-out to 100 subscribers", and a citation of
-`tests/bench_routing.rs`, a file that exists only in the PulseMQ broker's copy
-of this codec, not here. Leftover from the shared ancestor mentioned in
-`CLAUDE.md`. Replace with a comment about why this crate's own `Publish` uses
-`Arc<[u8]>` (cheap `Clone` across the QoS 1/2 retransmission path and
-`bench`'s per-publisher payload reuse) or drop the justification if it no
-longer applies here.
-
 ## Done
 
 - **Performance testing mode** — `bench` subcommand: N publishers and
@@ -128,3 +116,12 @@ longer applies here.
   received PUBLISH carries, `key=value` space-separated, through the same
   terminal-escaping path as the topic and payload (broker-controlled
   strings, same risk).
+- **Stale comment in `src/mqtt/packet/publish.rs`** — the doc comment on
+  `Publish::payload` described broker-only behaviour that never existed in
+  this crate (routing fan-out, a `tests/bench_routing.rs` that only exists
+  in the PulseMQ broker's copy of this codec), leftover from the shared
+  ancestor. On closer look, `Arc<[u8]>`'s benefit here isn't the
+  retransmission path either — nothing in this crate actually clones a
+  `Publish` today. Replaced with the honest reason: it keeps `Publish`
+  (and `Packet`, which wraps it) an O(1) `Clone` instead of an O(n) payload
+  copy, for whatever future call site duplicates a decoded message.

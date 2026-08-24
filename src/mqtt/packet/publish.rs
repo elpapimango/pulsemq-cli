@@ -18,12 +18,12 @@ pub struct Publish {
     pub properties: Properties,
     /// Application Message payload (3.3.3).
     ///
-    /// `Arc<[u8]>` rather than `Vec<u8>` because routing builds one `Publish`
-    /// per recipient from the same message, and QoS>0 clones it again into the
-    /// retransmission buffer. With a `Vec` each of those copied the payload;
-    /// fan-out to 100 subscribers of a 64 KiB message cost ~51 us per recipient
-    /// (see `tests/bench_routing.rs`). Payloads are never mutated after decode,
-    /// so sharing is free.
+    /// `Arc<[u8]>` rather than `Vec<u8>` so `Publish` (and `Packet`, which
+    /// wraps it) stays cheap to `#[derive(Clone)]` — an O(1) reference bump
+    /// rather than an O(n) payload copy — for whatever holds onto or
+    /// duplicates a decoded message without needing to know whether anything
+    /// else still holds it too. Payloads are never mutated after decode, so
+    /// sharing the buffer is always sound.
     pub payload: Arc<[u8]>,
 }
 
