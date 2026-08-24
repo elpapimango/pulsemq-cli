@@ -2,12 +2,7 @@
 
 Ordered. Pick the top item.
 
-## 1. v5 properties
-
-User properties, message expiry, content type and payload format indicator on
-`pub`, plus printing the received ones under `sub --show-topic`.
-
-## 2. End-to-end tests
+## 1. End-to-end tests
 
 Spawn a broker — `../pulsemq` if one is checked out, otherwise any
 spec-conformant one — then assert the publish/subscribe and request/reply round
@@ -15,13 +10,13 @@ trips. The smoke test in `CLAUDE.md` covers this by hand today. The broker stays
 a test fixture, discovered at run time; it must not become a build dependency
 again.
 
-## 3. QoS 2 in bench mode
+## 2. QoS 2 in bench mode
 
 `bench` accepts QoS 0 and 1 only. QoS 2 needs the PUBREL written from the send
 side while the ack side owns the read half; the plan for that is a small mpsc
 of packet identifiers awaiting PUBREL, drained between publishes.
 
-## 4. CI: dependency audit and non-Linux coverage
+## 3. CI: dependency audit and non-Linux coverage
 
 `.github/workflows/ci.yml` runs fmt/clippy/build/test/offline-build, all on
 `ubuntu-latest`. Two gaps:
@@ -34,7 +29,7 @@ of packet identifiers awaiting PUBREL, drained between publishes.
   password-file warning, environment variable byte handling) has no CI runner
   that exercises the `not(unix)` branch, so it can silently rot.
 
-## 5. Stale comment in `src/mqtt/packet/publish.rs`
+## 4. Stale comment in `src/mqtt/packet/publish.rs`
 
 The doc comment on `Publish::payload` (lines 21–26) describes broker-only
 behaviour that does not exist in this crate — "routing builds one `Publish`
@@ -124,3 +119,12 @@ longer applies here.
   there's nothing left to validate at connect time. Wired into
   `client::handshake`, so `pub`, `sub`, `request` and `bench` all get it for
   free.
+- **v5 properties** — `pub --user-property KEY=VALUE` (repeatable),
+  `--message-expiry-interval`, `--content-type`, `--payload-format-indicator`;
+  rejected as a usage error on a v3.x connection (which has no Properties to
+  carry them in) if any is actually set, but not merely for existing on a
+  v3.x run — the same "fail before dialling" style `request`'s own version
+  restriction uses. `sub --show-topic` prints whichever of the four a
+  received PUBLISH carries, `key=value` space-separated, through the same
+  terminal-escaping path as the topic and payload (broker-controlled
+  strings, same risk).

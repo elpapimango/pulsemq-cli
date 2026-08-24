@@ -3,6 +3,7 @@
 
 use std::io::Write;
 
+use crate::mqtt::codec::Properties;
 use crate::mqtt::packet::{Packet, PubAck, Publish, Subscribe, TopicFilter};
 use crate::mqtt::types::{QoS, ReasonCode};
 
@@ -124,6 +125,13 @@ pub fn print_message(publish: &Publish, show_topic: bool) {
     let to_terminal = stdout.is_terminal();
     let mut out = stdout.lock();
     if show_topic {
+        // Properties are broker-controlled strings too (content type, user
+        // property keys/values), so they go through the same escaping as
+        // the topic and payload before reaching a terminal.
+        if let Some(line) = format_properties(&publish.properties) {
+            write_payload(&mut out, &line, to_terminal);
+            let _ = out.write_all(b"\n");
+        }
         // The topic is broker-controlled too, and reaches the terminal on the
         // same line as the payload.
         write_payload(&mut out, publish.topic.as_bytes(), to_terminal);
@@ -132,6 +140,29 @@ pub fn print_message(publish: &Publish, show_topic: bool) {
     write_payload(&mut out, &publish.payload, to_terminal);
     let _ = out.write_all(b"\n");
     let _ = out.flush();
+}
+
+/// Render the v5 properties `--show-topic` prints, one `key=value` per
+/// property, space-separated. `None` when the PUBLISH carries none of them
+/// (always the case on v3.x, which has no properties at all).
+fn format_properties(properties: &Properties) -> Option<Vec<u8>> {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(v) = &properties.content_type {
+        parts.push(format!("content-type={v}"));
+    }
+    if let Some(v) = properties.message_expiry_interval {
+        parts.push(format!("message-expiry-interval={v}"));
+    }
+    if let Some(v) = properties.payload_format_indicator {
+        parts.push(format!("payload-format-indicator={v}"));
+    }
+    for (k, v) in &properties.user_properties {
+        parts.push(format!("user:{k}={v}"));
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    Some(parts.join(" ").into_bytes())
 }
 
 /// Write broker-supplied bytes to stdout, escaping control characters only
@@ -227,5 +258,35 @@ mod tests {
         let mut out = Vec::new();
         write_payload(&mut out, &[0x00, 0xff, 0x1b, 0x7f], true);
         assert_eq!(out, b"\\x00\xff\\x1b\\x7f");
+    }
+
+    #[test]
+    fn no_properties_formats_to_nothing() {
+        assert!(format_properties(&Properties::new()).is_none());
+    }
+
+    #[test]
+    fn every_supported_property_renders_as_key_equals_value() {
+        let mut properties = Properties::new();
+        properties.content_type = Some("application/json".into());
+        properties.message_expiry_interval = Some(60);
+        properties.payload_format_indicator = Some(1);
+        properties.user_properties = vec![("room".into(), "kitchen".into())];
+
+        let line = format_properties(&properties).expect("properties render");
+        assert_eq!(
+            String::from_utf8(line).unwrap(),
+            "content-type=application/json message-expiry-interval=60 \
+             payload-format-indicator=1 user:room=kitchen"
+        );
+    }
+
+    /// A property other than the four `sub` prints (e.g. `response_topic`,
+    /// which `request` uses) must not produce a stray properties line.
+    #[test]
+    fn an_unrelated_property_alone_formats_to_nothing() {
+        let mut properties = Properties::new();
+        properties.response_topic = Some("replies/here".into());
+        assert!(format_properties(&properties).is_none());
     }
 }

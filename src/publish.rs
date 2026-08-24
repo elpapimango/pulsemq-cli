@@ -5,6 +5,7 @@
 
 use std::io::{BufRead, Read};
 
+use crate::mqtt::codec::Properties;
 use crate::mqtt::packet::{Packet, Publish};
 use crate::mqtt::types::{QoS, ReasonCode};
 
@@ -49,15 +50,55 @@ fn resolve_payload(args: &PubArgs) -> Result<PayloadSource> {
     ))
 }
 
+/// v5 Properties (2.2.2) for the PUBLISH(es), from whichever `--user-property`
+/// / `--message-expiry-interval` / `--content-type` /
+/// `--payload-format-indicator` flags were given. Rejects those flags
+/// outright on a v3.x connection, which has no Properties to carry them in
+/// — the same "fail before dialling" style `request` uses for its own
+/// version restriction, so a doomed run doesn't get as far as a socket.
+fn resolve_properties(args: &PubArgs) -> Result<Properties> {
+    let used_on_v3 = !args.conn.version().has_properties()
+        && (!args.user_properties.is_empty()
+            || args.message_expiry_interval.is_some()
+            || args.content_type.is_some()
+            || args.payload_format_indicator);
+    if used_on_v3 {
+        return Err(Error::Usage(
+            "--user-property/--message-expiry-interval/--content-type/\
+             --payload-format-indicator need v5 properties (--protocol 5)"
+                .into(),
+        ));
+    }
+    let mut properties = Properties::new();
+    if args.conn.version().has_properties() {
+        properties.user_properties = args.user_properties.clone();
+        properties.message_expiry_interval = args.message_expiry_interval;
+        properties.content_type = args.content_type.clone();
+        if args.payload_format_indicator {
+            properties.payload_format_indicator = Some(1);
+        }
+    }
+    Ok(properties)
+}
+
 pub async fn run(args: PubArgs) -> Result<()> {
     let qos = QoS::from_u8(args.qos)?;
     let source = resolve_payload(&args)?;
+    let properties = resolve_properties(&args)?;
 
     let mut client = Client::connect(&args.conn).await?;
 
     match source {
         PayloadSource::Once(payload) => {
-            publish_one(&mut client, &args.topic, payload, qos, args.retain).await?;
+            publish_one(
+                &mut client,
+                &args.topic,
+                payload,
+                qos,
+                args.retain,
+                properties,
+            )
+            .await?;
         }
         PayloadSource::Lines => {
             for line in std::io::stdin().lock().lines() {
@@ -68,6 +109,7 @@ pub async fn run(args: PubArgs) -> Result<()> {
                     line.into_bytes(),
                     qos,
                     args.retain,
+                    properties.clone(),
                 )
                 .await?;
             }
@@ -86,6 +128,7 @@ async fn publish_one(
     payload: Vec<u8>,
     qos: QoS,
     retain: bool,
+    properties: Properties,
 ) -> Result<()> {
     let packet_id = match qos {
         QoS::AtMostOnce => None,
@@ -97,7 +140,7 @@ async fn publish_one(
         retain,
         topic: topic.to_string(),
         packet_id,
-        properties: Default::default(),
+        properties,
         payload: payload.into(),
     };
     client.send(&Packet::Publish(publish)).await?;
@@ -248,9 +291,16 @@ mod tests {
             .await
             .expect("client connects");
         for payload in [b"one".to_vec(), b"two".to_vec(), b"three".to_vec()] {
-            publish_one(&mut client, "x", payload, QoS::AtLeastOnce, false)
-                .await
-                .expect("publish_one succeeds");
+            publish_one(
+                &mut client,
+                "x",
+                payload,
+                QoS::AtLeastOnce,
+                false,
+                Properties::new(),
+            )
+            .await
+            .expect("publish_one succeeds");
         }
         client.disconnect().await.expect("disconnect");
 
@@ -306,5 +356,69 @@ mod tests {
             panic!("expected a single payload");
         };
         assert!(payload.is_empty());
+    }
+
+    #[test]
+    fn v5_properties_populate_from_the_flags() {
+        let args = pub_args(&[
+            "pulsemq-cli",
+            "pub",
+            "-t",
+            "x",
+            "--user-property",
+            "room=kitchen",
+            "--message-expiry-interval",
+            "60",
+            "--content-type",
+            "application/json",
+            "--payload-format-indicator",
+        ]);
+        let properties = resolve_properties(&args).expect("v5 properties resolve");
+        assert_eq!(
+            properties.user_properties,
+            vec![("room".to_string(), "kitchen".to_string())]
+        );
+        assert_eq!(properties.message_expiry_interval, Some(60));
+        assert_eq!(properties.content_type.as_deref(), Some("application/json"));
+        assert_eq!(properties.payload_format_indicator, Some(1));
+    }
+
+    #[test]
+    fn a_v5_only_flag_on_v3_is_a_usage_error() {
+        let args = pub_args(&[
+            "pulsemq-cli",
+            "pub",
+            "-t",
+            "x",
+            "--protocol",
+            "3.1.1",
+            "--content-type",
+            "text/plain",
+        ]);
+        let err = resolve_properties(&args).expect_err("v5-only flag on v3.1.1");
+        assert!(matches!(err, Error::Usage(_)));
+    }
+
+    /// v3.x with none of the v5-only flags set must not error — the flags
+    /// are optional, not a blanket version requirement the way `request`'s
+    /// v3.1 rejection is.
+    #[test]
+    fn v3_without_any_v5_only_flag_is_fine() {
+        let args = pub_args(&["pulsemq-cli", "pub", "-t", "x", "--protocol", "3.1.1"]);
+        let properties = resolve_properties(&args).expect("no v5-only flags used");
+        assert!(properties.is_empty());
+    }
+
+    #[test]
+    fn user_property_requires_an_equals_sign() {
+        assert!(crate::cli::Cli::try_parse_from([
+            "pulsemq-cli",
+            "pub",
+            "-t",
+            "x",
+            "--user-property",
+            "no-equals-sign",
+        ])
+        .is_err());
     }
 }

@@ -388,6 +388,36 @@ pub struct PubArgs {
     /// Ask the broker to retain the message.
     #[arg(short = 'r', long)]
     pub retain: bool,
+
+    /// User Property (2.2.2.2), `KEY=VALUE`. Repeatable — the spec allows a
+    /// PUBLISH to carry more than one. MQTT v5 only.
+    #[arg(long = "user-property", value_name = "KEY=VALUE", value_parser = parse_user_property)]
+    pub user_properties: Vec<(String, String)>,
+
+    /// Message Expiry Interval in seconds (3.3.2.3.3): how long the broker
+    /// should keep this message before dropping it undelivered. MQTT v5
+    /// only.
+    #[arg(long, value_name = "SECS")]
+    pub message_expiry_interval: Option<u32>,
+
+    /// Content Type (3.3.2.3.9), e.g. `application/json`. Describes the
+    /// payload; the broker does not interpret it. MQTT v5 only.
+    #[arg(long, value_name = "TYPE")]
+    pub content_type: Option<String>,
+
+    /// Mark the payload as UTF-8 text (Payload Format Indicator, 3.3.2.3.2)
+    /// rather than unspecified bytes. MQTT v5 only.
+    #[arg(long)]
+    pub payload_format_indicator: bool,
+}
+
+/// Parse `--user-property KEY=VALUE`, splitting on the first `=` (2.2.2.2
+/// puts no restriction on `=` appearing again inside the value).
+fn parse_user_property(s: &str) -> std::result::Result<(String, String), String> {
+    match s.split_once('=') {
+        Some((k, v)) => Ok((k.to_string(), v.to_string())),
+        None => Err(format!("expected KEY=VALUE, got {s:?}")),
+    }
 }
 
 #[derive(Args, Debug)]
