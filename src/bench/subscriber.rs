@@ -8,7 +8,6 @@ use std::time::{Duration, Instant};
 use crate::mqtt::framing::{read_packet, write_packet, ReadOutcome};
 use crate::mqtt::packet::{Packet, PubAck, RetainHandling, Subscribe, TopicFilter};
 use crate::mqtt::types::{QoS, ReasonCode};
-use tokio::net::TcpStream;
 use tokio::sync::watch;
 
 use crate::bench::payload;
@@ -17,6 +16,7 @@ use crate::bench::Config;
 use crate::cli::ConnectionArgs;
 use crate::client::handshake;
 use crate::error::{Error, Result};
+use crate::transport;
 
 /// Run one subscriber until the stop signal. Returns its end-to-end latency
 /// samples.
@@ -35,8 +35,7 @@ pub async fn run(
         None => format!("{}-sub-{index}", crate::client::generated_client_id()),
     };
 
-    let mut stream = TcpStream::connect((conn.broker.as_str(), conn.port)).await?;
-    stream.set_nodelay(true)?;
+    let mut stream = transport::connect(&conn).await?;
     let negotiated = handshake(&mut stream, &conn, &client_id).await?;
     let version = negotiated.version;
     // Same ceiling the handshake advertised, so every read here agrees with

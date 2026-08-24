@@ -2,40 +2,23 @@
 
 Ordered. Pick the top item.
 
-## 1. Security audit — remaining item
-
-The first two passes are done; see "Done" below for what they changed. What
-they did not close:
-
-- **Plaintext warning** — nothing says credentials are crossing the wire in
-  the clear. Deliberately left out until TLS exists (item 2), so the warning
-  has an alternative to point at rather than firing on every authenticated
-  connection and being trained away. Lands alongside item 2.
-
-## 2. TLS and mutual TLS
-
-`--cafile`, `--cert`, `--key`, `--insecure`, and a default port of 8883 when TLS
-is on. All of it — root store, SNI, client certificate — is new code here, on
-`tokio-rustls`, behind a non-default Cargo feature so the plain-TCP build keeps
-its current dependency tree.
-
-## 3. Payload sources
+## 1. Payload sources
 
 `--file FILE` and a stdin mode (whole input, or a message per line) for `pub`,
 so a script can pipe into it. Today only `--message` exists.
 
-## 4. Will message
+## 2. Will message
 
 `--will-topic`, `--will-payload`, `--will-qos`, `--will-retain`. `packet::Will`
 already carries them; only the flags and the wiring into `Client::connect` are
 missing.
 
-## 5. v5 properties
+## 3. v5 properties
 
 User properties, message expiry, content type and payload format indicator on
 `pub`, plus printing the received ones under `sub --show-topic`.
 
-## 6. WebSocket transport
+## 4. WebSocket transport
 
 `ws://` and `wss://`. The handshake must offer the `mqtt` subprotocol or the
 server rejects it at the HTTP layer, before any MQTT packet is exchanged.
@@ -43,7 +26,7 @@ server rejects it at the HTTP layer, before any MQTT packet is exchanged.
 first. `bench` already sidesteps this by calling `client::handshake` on the
 socket directly, so the abstraction that lands here should serve both.
 
-## 7. End-to-end tests
+## 5. End-to-end tests
 
 Spawn a broker — `../pulsemq` if one is checked out, otherwise any
 spec-conformant one — then assert the publish/subscribe and request/reply round
@@ -51,25 +34,26 @@ trips. The smoke test in `CLAUDE.md` covers this by hand today. The broker stays
 a test fixture, discovered at run time; it must not become a build dependency
 again.
 
-## 8. QoS 2 in bench mode
+## 6. QoS 2 in bench mode
 
 `bench` accepts QoS 0 and 1 only. QoS 2 needs the PUBREL written from the send
 side while the ack side owns the read half; the plan for that is a small mpsc
 of packet identifiers awaiting PUBREL, drained between publishes.
 
-## 9. CI: dependency audit and non-Linux coverage
+## 7. CI: dependency audit and non-Linux coverage
 
 `.github/workflows/ci.yml` runs fmt/clippy/build/test/offline-build, all on
 `ubuntu-latest`. Two gaps:
 
 - No RustSec check (`cargo audit` or `cargo deny`) on the dependency tree, so
-  a known-vulnerable transitive dependency (tokio, clap, serde_json today;
-  `tokio-rustls` once item 2 lands) is not gated in CI, only caught by hand.
+  a known-vulnerable transitive dependency (tokio, clap, serde_json,
+  tokio-rustls and friends behind `--features tls`) is not gated in CI, only
+  caught by hand.
 - The `#[cfg(unix)]` / `#[cfg(not(unix))]` split in `cli.rs` (world-readable
   password-file warning, environment variable byte handling) has no CI runner
   that exercises the `not(unix)` branch, so it can silently rot.
 
-## 10. Stale comment in `src/mqtt/packet/publish.rs`
+## 8. Stale comment in `src/mqtt/packet/publish.rs`
 
 The doc comment on `Publish::payload` (lines 21–26) describes broker-only
 behaviour that does not exist in this crate — "routing builds one `Publish`
@@ -113,3 +97,21 @@ longer applies here.
   is now checked before the first `recv`, not only after one arrives. (On
   inspection, `request -n 0` never had this bug: its loop already checks the
   count before each `recv`.)
+- **TLS and mutual TLS** — `--tls`, `--cafile` (falls back to the OS trust
+  store via `rustls-native-certs` when omitted), `--cert`/`--key` for mutual
+  TLS, `--insecure` (warns every connection, unlike the one-shot plaintext
+  warning). `--port` now defaults to 8883 with `--tls`, 1883 without. All of
+  it — `tokio-rustls`, `rustls-pemfile`, `rustls-native-certs` — sits behind
+  a non-default `tls` Cargo feature; the plain build's dependency tree is
+  unchanged (`cargo tree -e normal` confirmed). Also closes the last
+  security-audit bullet: a one-time warning fires when a password is
+  supplied without `--tls`.
+
+  Landed alongside it: `src/transport.rs`, a new `Stream` abstraction (plain
+  TCP or TLS behind one `AsyncRead`/`AsyncWrite`) that both `Client` and
+  `bench` now dial through, replacing each one's own direct `TcpStream`
+  handling — the refactor TODO's WebSocket item asked for, done once so
+  WebSocket can reuse it rather than repeating it. `bench`'s split keeps
+  `TcpStream::into_split()`'s zero-cost path for the plain case and only
+  pays `tokio::io::split`'s generic (mutex-backed) path when TLS is active,
+  so the harness doesn't add overhead to what it measures.

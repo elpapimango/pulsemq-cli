@@ -15,7 +15,6 @@ use std::time::{Duration, Instant};
 use crate::mqtt::framing::{read_packet, write_packet, ReadOutcome};
 use crate::mqtt::packet::{Packet, Publish};
 use crate::mqtt::types::{QoS, ReasonCode};
-use tokio::net::TcpStream;
 use tokio::sync::{watch, Mutex, Semaphore};
 
 use crate::bench::payload::{self, Header};
@@ -25,6 +24,7 @@ use crate::bench::Config;
 use crate::cli::ConnectionArgs;
 use crate::client::handshake;
 use crate::error::{Error, Result};
+use crate::transport;
 
 /// Send times for the packets this publisher is waiting on.
 type InFlight = Arc<Mutex<HashMap<u16, Instant>>>;
@@ -46,8 +46,7 @@ pub async fn run(
         None => format!("{}-pub-{index}", crate::client::generated_client_id()),
     };
 
-    let mut stream = TcpStream::connect((conn.broker.as_str(), conn.port)).await?;
-    stream.set_nodelay(true)?;
+    let mut stream = transport::connect(&conn).await?;
     let negotiated = handshake(&mut stream, &conn, &client_id).await?;
     let version = negotiated.version;
     // Same ceiling the handshake advertised, so every read here agrees with

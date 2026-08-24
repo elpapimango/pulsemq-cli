@@ -11,11 +11,11 @@ use crate::mqtt::framing::{read_packet, write_packet, ReadOutcome};
 use crate::mqtt::packet::{Connect, Packet};
 use crate::mqtt::types::{ProtocolVersion, ReasonCode};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::TcpStream;
 use tokio::time::timeout;
 
 use crate::cli::ConnectionArgs;
 use crate::error::{Error, Result};
+use crate::transport;
 
 /// What the broker granted in CONNACK, for the caller to respect afterwards.
 #[derive(Debug, Clone, Copy)]
@@ -105,7 +105,7 @@ pub fn generated_client_id() -> String {
 }
 
 pub struct Client {
-    stream: TcpStream,
+    stream: transport::Stream,
     version: ProtocolVersion,
     keep_alive: u16,
     next_packet_id: u16,
@@ -137,10 +137,7 @@ impl Client {
         args.password()
             .map_err(|e| Error::Usage(format!("cannot read the password file: {e}")))?;
 
-        let mut stream = TcpStream::connect((args.broker.as_str(), args.port)).await?;
-        // One small packet at a time is this tool's whole traffic pattern;
-        // Nagle would add up to 40 ms to every request/reply round trip.
-        stream.set_nodelay(true)?;
+        let mut stream = transport::connect(args).await?;
 
         let negotiated = handshake(&mut stream, args, &client_id).await?;
 

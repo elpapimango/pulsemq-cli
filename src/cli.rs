@@ -104,9 +104,9 @@ pub struct ConnectionArgs {
     #[arg(short = 'b', long, default_value = "localhost", value_name = "HOST")]
     pub broker: String,
 
-    /// Broker port.
-    #[arg(short = 'p', long, default_value_t = 1883)]
-    pub port: u16,
+    /// Broker port. Omitted, defaults to 8883 with --tls, 1883 without.
+    #[arg(short = 'p', long = "port", value_name = "PORT")]
+    pub port_arg: Option<u16>,
 
     /// Client identifier. Omitted, the tool generates one and the broker
     /// treats the session as disposable.
@@ -143,6 +143,33 @@ pub struct ConnectionArgs {
     /// `--client-id`, since a generated identifier cannot be resumed.
     #[arg(long, requires = "client_id")]
     pub persistent_session: bool,
+
+    /// Use TLS. Changes the default port to 8883 unless --port overrides it.
+    #[cfg(feature = "tls")]
+    #[arg(long)]
+    pub tls: bool,
+
+    /// PEM CA bundle to verify the broker's certificate against. Omitted,
+    /// the OS trust store is used instead.
+    #[cfg(feature = "tls")]
+    #[arg(long, value_name = "FILE", requires = "tls")]
+    pub cafile: Option<std::path::PathBuf>,
+
+    /// PEM client certificate for mutual TLS. Requires --key.
+    #[cfg(feature = "tls")]
+    #[arg(long, value_name = "FILE", requires_all = ["tls", "key"])]
+    pub cert: Option<std::path::PathBuf>,
+
+    /// PEM private key matching --cert, for mutual TLS.
+    #[cfg(feature = "tls")]
+    #[arg(long, value_name = "FILE", requires_all = ["tls", "cert"])]
+    pub key: Option<std::path::PathBuf>,
+
+    /// Skip TLS server certificate verification. Dangerous: only for
+    /// testing against a broker with a certificate nothing else will trust.
+    #[cfg(feature = "tls")]
+    #[arg(long, requires = "tls")]
+    pub insecure: bool,
 }
 
 /// Hand-written rather than derived so a future `{:?}` on parsed args — a
@@ -150,9 +177,9 @@ pub struct ConnectionArgs {
 /// password in a log or a terminal scrollback.
 impl std::fmt::Debug for ConnectionArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ConnectionArgs")
-            .field("broker", &self.broker)
-            .field("port", &self.port)
+        let mut d = f.debug_struct("ConnectionArgs");
+        d.field("broker", &self.broker)
+            .field("port_arg", &self.port_arg)
             .field("client_id", &self.client_id)
             .field("protocol", &self.protocol)
             .field("user", &self.user)
@@ -160,8 +187,14 @@ impl std::fmt::Debug for ConnectionArgs {
             .field("password_file", &self.password_file)
             .field("keepalive", &self.keepalive)
             .field("max_packet_size", &self.max_packet_size)
-            .field("persistent_session", &self.persistent_session)
-            .finish()
+            .field("persistent_session", &self.persistent_session);
+        #[cfg(feature = "tls")]
+        d.field("tls", &self.tls)
+            .field("cafile", &self.cafile)
+            .field("cert", &self.cert)
+            .field("key", &self.key)
+            .field("insecure", &self.insecure);
+        d.finish()
     }
 }
 
@@ -172,6 +205,16 @@ impl ConnectionArgs {
 
     pub fn version(&self) -> ProtocolVersion {
         self.protocol.into()
+    }
+
+    /// The port to dial: `--port` if given, else 8883 with `--tls`, else
+    /// 1883 — matching each transport's IANA-registered default.
+    pub fn port(&self) -> u16 {
+        #[cfg(feature = "tls")]
+        let default = if self.tls { 8883 } else { 1883 };
+        #[cfg(not(feature = "tls"))]
+        let default = 1883;
+        self.port_arg.unwrap_or(default)
     }
 
     /// The inbound packet ceiling, validated.
@@ -227,6 +270,36 @@ impl ConnectionArgs {
             };
             bytes.into()
         }))
+    }
+
+    /// Whether any password source is configured, without reading it — a
+    /// presence check only, so callers that just need to know "is a
+    /// credential going on the wire" (the plaintext warning below) don't pay
+    /// for a second file read on top of `password()`'s own.
+    #[cfg(feature = "tls")]
+    fn has_password_source(&self) -> bool {
+        self.password_file.is_some()
+            || self.password.is_some()
+            || std::env::var_os(PASSWORD_ENV_VAR).is_some()
+    }
+
+    /// Warn once per process when a password is configured and the
+    /// connection won't be encrypted — credentials otherwise cross the
+    /// network in the clear with nothing saying so. Only compiled with the
+    /// `tls` feature: without it there is no alternative to point at, and a
+    /// warning with no actionable fix is just noise (Security audit, item
+    /// 1's "plaintext warning" bullet, deferred until TLS existed).
+    #[cfg(feature = "tls")]
+    pub fn warn_if_plaintext_password(&self) {
+        static WARNED: std::sync::Once = std::sync::Once::new();
+        if self.has_password_source() && !self.tls {
+            WARNED.call_once(|| {
+                eprintln!(
+                    "pulsemq-cli: warning: sending a password without --tls; \
+                     it crosses the network in the clear"
+                );
+            });
+        }
     }
 }
 
@@ -477,7 +550,7 @@ mod tests {
             panic!("expected the pub subcommand");
         };
         assert_eq!(args.conn.broker, "broker.example");
-        assert_eq!(args.conn.port, 8883);
+        assert_eq!(args.conn.port(), 8883);
         assert_eq!(args.topic, "sensors/temp");
         assert_eq!(args.message.as_deref(), Some("21.5"));
         assert_eq!(args.qos, 2);
