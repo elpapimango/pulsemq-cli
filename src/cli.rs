@@ -519,7 +519,7 @@ pub struct BenchArgs {
     #[arg(long, default_value = "bench", value_name = "PREFIX")]
     pub topic_prefix: String,
 
-    /// Quality of Service for both publishing and subscribing: 0 or 1.
+    /// Quality of Service for both publishing and subscribing: 0, 1 or 2.
     #[arg(short = 'q', long, default_value_t = 0, value_parser = clap::value_parser!(u8).range(0..=2))]
     pub qos: u8,
 

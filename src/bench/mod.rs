@@ -59,16 +59,6 @@ impl Config {
         if args.publishers == 0 {
             return Err(Error::Usage("--publishers must be at least 1".into()));
         }
-        // Bench mode supports QoS 0 and 1 only: the QoS 2 publisher path
-        // needs a PUBREL written from the send side while the ack side owns
-        // the read half, which is not implemented yet. A half-built QoS 2
-        // path would corrupt the throughput and latency numbers this
-        // feature exists to produce.
-        if args.qos == 2 {
-            return Err(Error::Usage(
-                "--qos 2: bench mode does not yet support QoS 2".into(),
-            ));
-        }
         if let Some(rate) = args.rate {
             if !rate.is_finite() || rate <= 0.0 || rate > MAX_RATE {
                 return Err(Error::Usage(format!(
@@ -437,13 +427,10 @@ mod tests {
         assert_eq!(config.deadline(), Some(Duration::from_secs(7)));
     }
 
-    /// The QoS 2 publisher path needs a PUBREL written from the send side
-    /// while the ack side owns the read half; bench mode does not support
-    /// it yet, so `--qos 2` is rejected here rather than half-implemented.
     #[test]
-    fn qos_2_is_rejected() {
+    fn qos_2_is_accepted() {
         let args = args_from(&["pulsemq-cli", "bench", "--qos", "2"]);
-        assert!(Config::from_args(&args).is_err());
+        assert_eq!(Config::from_args(&args).unwrap().qos, QoS::ExactlyOnce);
     }
 
     /// `Duration::from_secs_f64(1.0 / rate)` in `schedule.rs` panics for a

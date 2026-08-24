@@ -1,11 +1,11 @@
 //! One publishing connection: a write side that paces sends and holds the
 //! in-flight window, and a read side that matches acknowledgements.
 //!
-//! Bench mode only ever sees QoS 0 or 1 here: `Config::from_args` rejects
-//! `--qos 2` before a publisher is ever spawned, so this task does not
-//! implement the PUBREC -> PUBREL -> PUBCOMP exchange (3.4 - 3.7). That path
-//! needs a PUBREL written from the send side while the ack side owns the
-//! read half; it is tracked as a follow-up rather than half-built here.
+//! QoS 2's PUBREC -> PUBREL -> PUBCOMP exchange (3.4 - 3.7) splits across
+//! both halves: the ack side (which owns the read half) is what sees a
+//! PUBREC, but only the write side may write to the socket. It hands the
+//! packet identifier back over `pubrel_tx`/`pubrel_rx`, and the write side
+//! drains that channel between publishes, writing one PUBREL per id.
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
@@ -13,9 +13,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::mqtt::framing::{read_packet, write_packet, ReadOutcome};
-use crate::mqtt::packet::{Packet, Publish};
-use crate::mqtt::types::{QoS, ReasonCode};
-use tokio::sync::{watch, Mutex, Semaphore};
+use crate::mqtt::packet::{Packet, PubAck, Publish};
+use crate::mqtt::types::{ProtocolVersion, QoS, ReasonCode};
+use tokio::sync::{mpsc, watch, Mutex, Semaphore};
 
 use crate::bench::payload::{self, Header};
 use crate::bench::schedule::Schedule;
@@ -28,6 +28,54 @@ use crate::transport;
 
 /// Send times for the packets this publisher is waiting on.
 type InFlight = Arc<Mutex<HashMap<u16, Instant>>>;
+
+/// Complete an in-flight id on its terminal acknowledgement — PUBACK for
+/// QoS 1, PUBCOMP (or an erroring PUBREC, which ends the flow early per
+/// 4.3.3) for QoS 2. Both mean the same thing to a publisher: the window
+/// slot is free, and unless the broker refused it, a latency sample.
+#[allow(clippy::too_many_arguments)]
+async fn complete_ack(
+    id: u16,
+    reason_code: ReasonCode,
+    in_flight: &InFlight,
+    permits: &Semaphore,
+    counters: &Counters,
+    samples: &mut Samples,
+    warmup_until: Instant,
+) {
+    if reason_code.is_error() {
+        counters.record_refusal(reason_code);
+    }
+    let sent = in_flight.lock().await.remove(&id);
+    if let Some(sent) = sent {
+        // The window slot is free either way; only a successful ack
+        // contributes to the ack count and its latency distribution —
+        // mixing in a refused message's (typically much faster) round trip
+        // would skew the ack-latency percentiles low exactly when the run
+        // is going badly.
+        permits.add_permits(1);
+        if !reason_code.is_error() {
+            counters.acknowledged.fetch_add(1, Ordering::Relaxed);
+            if sent >= warmup_until {
+                samples.record(sent.elapsed().as_nanos() as u64);
+            }
+        }
+    }
+}
+
+/// Write a PUBREL for every QoS 2 id the ack side has handed back since the
+/// last drain.
+async fn drain_pubrels<W: tokio::io::AsyncWrite + Unpin>(
+    rx: &mut mpsc::UnboundedReceiver<u16>,
+    writer: &mut W,
+    version: ProtocolVersion,
+) -> Result<()> {
+    while let Ok(id) = rx.try_recv() {
+        let pubrel = PubAck::new(id, ReasonCode::Success);
+        write_packet(writer, &Packet::Pubrel(pubrel), version).await?;
+    }
+    Ok(())
+}
 
 /// Run one publisher to completion. Returns its acknowledgement-latency
 /// samples; end-to-end samples come from the subscribers.
@@ -62,6 +110,9 @@ pub async fn run(
     let (mut reader, mut writer) = stream.into_split();
     let permits = Arc::new(Semaphore::new(window));
     let in_flight: InFlight = Arc::new(Mutex::new(HashMap::new()));
+    // QoS 2 PUBRECs the ack side has seen but this task (which owns the
+    // write half) has not yet turned into a PUBREL.
+    let (pubrel_tx, mut pubrel_rx) = mpsc::unbounded_channel::<u16>();
 
     // The read side lives as long as the write side plus its outstanding
     // acknowledgements; it ends when the socket closes or the write side
@@ -93,32 +144,54 @@ pub async fn run(
                     }
                 };
                 match packet {
+                    // QoS 1's terminal acknowledgement.
                     Packet::Puback(ack) => {
-                        if ack.reason_code.is_error() {
-                            counters.record_refusal(ack.reason_code);
-                        }
-                        let sent = in_flight.lock().await.remove(&ack.packet_id);
-                        if let Some(sent) = sent {
-                            // The window slot is free either way; only a
-                            // successful ack contributes to the ack count and
-                            // its latency distribution — mixing in a refused
-                            // message's (typically much faster) round trip
-                            // would skew the ack-latency percentiles low
-                            // exactly when the run is going badly.
-                            permits.add_permits(1);
-                            if !ack.reason_code.is_error() {
-                                counters.acknowledged.fetch_add(1, Ordering::Relaxed);
-                                if sent >= warmup_until {
-                                    samples.record(sent.elapsed().as_nanos() as u64);
-                                }
-                            }
+                        complete_ack(
+                            ack.packet_id,
+                            ack.reason_code,
+                            &in_flight,
+                            &permits,
+                            &counters,
+                            &mut samples,
+                            warmup_until,
+                        )
+                        .await;
+                    }
+                    Packet::Pubrec(rec) => {
+                        if rec.reason_code.is_error() {
+                            // 4.3.3: a Reason Code >= 0x80 on PUBREC means the
+                            // QoS 2 flow is already complete — no PUBREL
+                            // follows, and none should be sent.
+                            complete_ack(
+                                rec.packet_id,
+                                rec.reason_code,
+                                &in_flight,
+                                &permits,
+                                &counters,
+                                &mut samples,
+                                warmup_until,
+                            )
+                            .await;
+                        } else {
+                            // Only the write side may write to the socket
+                            // (module doc comment); hand the id back so it
+                            // can send the PUBREL.
+                            let _ = pubrel_tx.send(rec.packet_id);
                         }
                     }
-                    // Bench mode rejects `--qos 2` in `Config::from_args`, so
-                    // a well-behaved broker never sends these; ignore rather
-                    // than build the PUBREL half of QoS 2 (see the module
-                    // doc comment).
-                    Packet::Pubrec(_) | Packet::Pubcomp(_) => {}
+                    // QoS 2's terminal acknowledgement.
+                    Packet::Pubcomp(comp) => {
+                        complete_ack(
+                            comp.packet_id,
+                            comp.reason_code,
+                            &in_flight,
+                            &permits,
+                            &counters,
+                            &mut samples,
+                            warmup_until,
+                        )
+                        .await;
+                    }
                     _ => {}
                 }
             }
@@ -141,6 +214,10 @@ pub async fn run(
     let mut window_closed = false;
 
     loop {
+        // A QoS 2 PUBREL owed to the broker for a PUBREC the ack side saw
+        // since the last iteration — only this side may write to the
+        // socket, so this is where it actually gets sent.
+        drain_pubrels(&mut pubrel_rx, &mut writer, version).await?;
         if quota.is_some_and(|q| sent >= q) {
             break;
         }
@@ -251,8 +328,13 @@ pub async fn run(
     if !window_closed {
         let drain_deadline = Instant::now() + Duration::from_secs(5);
         while !in_flight.lock().await.is_empty() && Instant::now() < drain_deadline {
+            // A PUBREC can still land while this loop waits; without this,
+            // a QoS 2 run's trailing messages would never see their PUBREL
+            // and the in-flight map would never empty before the deadline.
+            let _ = drain_pubrels(&mut pubrel_rx, &mut writer, version).await;
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+        let _ = drain_pubrels(&mut pubrel_rx, &mut writer, version).await;
     }
     let _ = write_packet(
         &mut writer,
@@ -359,6 +441,51 @@ mod tests {
         }
     }
 
+    /// A broker stub that runs the full QoS 2 handshake: PUBREC for every
+    /// PUBLISH, then PUBCOMP for every PUBREL it gets back. Returns how many
+    /// of each it saw, so a test can confirm the PUBREL side actually ran.
+    async fn qos2_handshake(listener: TcpListener) -> (u64, u64) {
+        let (mut stream, _) = listener.accept().await.expect("accept");
+        let version = ProtocolVersion::V5;
+
+        let ReadOutcome::Packet(Packet::Connect(_), _) = read_packet(&mut stream, 65_535, version)
+            .await
+            .expect("CONNECT")
+        else {
+            panic!("expected a CONNECT");
+        };
+        write_packet(
+            &mut stream,
+            &Packet::Connack(Connack::new(false, ReasonCode::Success)),
+            version,
+        )
+        .await
+        .expect("CONNACK");
+
+        let (mut publishes, mut pubrels) = (0u64, 0u64);
+        loop {
+            match read_packet(&mut stream, 268_435_455, version).await {
+                Ok(ReadOutcome::Packet(Packet::Publish(p), _)) => {
+                    publishes += 1;
+                    let id = p.packet_id.expect("QoS 2 PUBLISH carries a packet id");
+                    let rec = PubAck::new(id, ReasonCode::Success);
+                    write_packet(&mut stream, &Packet::Pubrec(rec), version)
+                        .await
+                        .expect("PUBREC");
+                }
+                Ok(ReadOutcome::Packet(Packet::Pubrel(rel), _)) => {
+                    pubrels += 1;
+                    let comp = PubAck::new(rel.packet_id, ReasonCode::Success);
+                    write_packet(&mut stream, &Packet::Pubcomp(comp), version)
+                        .await
+                        .expect("PUBCOMP");
+                }
+                Ok(ReadOutcome::Packet(_, _)) => continue,
+                _ => return (publishes, pubrels),
+            }
+        }
+    }
+
     /// A broker stub that CONNACKs but never acknowledges a PUBLISH, so the
     /// in-flight window is the only thing that can stop a publisher from
     /// racing ahead of it. Tallies how many PUBLISHes arrived in `received`.
@@ -453,6 +580,58 @@ mod tests {
                 .expect("broker task")
                 >= 10
         );
+    }
+
+    /// Regression: QoS 2's ack sample must be recorded once, on PUBCOMP —
+    /// not on PUBREC, and not twice. The broker stub only completes the
+    /// handshake when it actually receives a PUBREL, so this also proves
+    /// the write side (which owns the socket) sends the PUBRELs the ack
+    /// side hands it over the channel, rather than the QoS 2 arm being a
+    /// no-op that happens not to crash.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn qos_2_records_one_sample_per_message_on_pubcomp() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let broker = tokio::spawn(qos2_handshake(listener));
+
+        let config = Arc::new(config_for(&[
+            "pulsemq-cli",
+            "bench",
+            "--count",
+            "10",
+            "--qos",
+            "2",
+        ]));
+        let counters = Arc::new(Counters::default());
+        let baseline = Instant::now();
+        let (_tx, stop) = watch::channel(false);
+
+        let samples = tokio::time::timeout(
+            TEST_TIMEOUT,
+            run(
+                0,
+                config,
+                connection_args(port),
+                counters.clone(),
+                baseline,
+                baseline,
+                stop,
+            ),
+        )
+        .await
+        .expect("publisher does not hang")
+        .expect("publisher completes");
+
+        assert_eq!(counters.published.load(Ordering::Relaxed), 10);
+        assert_eq!(counters.acknowledged.load(Ordering::Relaxed), 10);
+        assert_eq!(samples.len(), 10, "one sample per message, not per PUBREC");
+
+        let (publishes, pubrels) = tokio::time::timeout(TEST_TIMEOUT, broker)
+            .await
+            .expect("broker task does not hang")
+            .expect("broker task");
+        assert_eq!(publishes, 10);
+        assert_eq!(pubrels, 10, "every PUBREC must be answered with a PUBREL");
     }
 
     #[tokio::test(flavor = "multi_thread")]

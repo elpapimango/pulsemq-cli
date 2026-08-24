@@ -121,9 +121,8 @@ pub async fn run(
                 }
 
                 // Acknowledge per QoS (4.3.2, 4.3.3). QoS 2 completes on the
-                // PUBREL the broker sends next; bench mode does not exercise
-                // this arm since `Config::from_args` rejects `--qos 2`, but
-                // it costs nothing to keep correct.
+                // PUBREL the broker sends next, handled by the `Pubrel` arm
+                // below.
                 if let Some(id) = p.packet_id {
                     let ack = PubAck::new(id, ReasonCode::Success);
                     let reply = match p.qos {

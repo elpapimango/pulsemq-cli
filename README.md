@@ -99,9 +99,6 @@ Subscribers connect and subscribe before any publisher starts, and deliveries
 still in flight get a `--drain` window after the last publish, so a message that
 arrives late is counted rather than reported as lost.
 
-`bench` accepts QoS 0 and 1. QoS 2 is rejected rather than half-measured — see
-`TODO.md`.
-
 ## Status
 
 Working: TCP, all three protocol versions, QoS 0/1/2 in both directions,

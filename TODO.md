@@ -10,13 +10,7 @@ trips. The smoke test in `CLAUDE.md` covers this by hand today. The broker stays
 a test fixture, discovered at run time; it must not become a build dependency
 again.
 
-## 2. QoS 2 in bench mode
-
-`bench` accepts QoS 0 and 1 only. QoS 2 needs the PUBREL written from the send
-side while the ack side owns the read half; the plan for that is a small mpsc
-of packet identifiers awaiting PUBREL, drained between publishes.
-
-## 3. CI: dependency audit and non-Linux coverage
+## 2. CI: dependency audit and non-Linux coverage
 
 `.github/workflows/ci.yml` runs fmt/clippy/build/test/offline-build, all on
 `ubuntu-latest`. Two gaps:
@@ -125,3 +119,11 @@ of packet identifiers awaiting PUBREL, drained between publishes.
   `Publish` today. Replaced with the honest reason: it keeps `Publish`
   (and `Packet`, which wraps it) an O(1) `Clone` instead of an O(n) payload
   copy, for whatever future call site duplicates a decoded message.
+- **QoS 2 in bench mode** — implemented per the plan this bullet used to
+  describe: a `pubrel_tx`/`pubrel_rx` `mpsc` channel in
+  `bench/publisher.rs` lets the ack task (which owns the read half, and
+  sees the PUBREC) hand a packet id back to the write side (which owns the
+  socket) to actually send the PUBREL. `complete_ack` — the "free the
+  permit, record a sample" logic — is now shared between PUBACK (QoS 1)
+  and PUBCOMP (QoS 2, or an erroring PUBREC, which 4.3.3 says ends the flow
+  without a PUBREL). `Config::from_args` no longer rejects `--qos 2`.
