@@ -1,5 +1,9 @@
 # pulsemq-cli
 
+> **⚠ Work in progress.** Written with heavy help from Claude (Anthropic's
+> AI) — code, tests and docs. Not yet battle-tested. Use at your own risk;
+> review before trusting it with production traffic.
+
 A command-line MQTT client for **v5.0**, **v3.1.1** and **v3.1**: publish a
 message, subscribe to topics, or do one request/reply round trip. One binary
 with three subcommands.
