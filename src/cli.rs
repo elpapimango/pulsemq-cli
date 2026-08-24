@@ -178,6 +178,24 @@ pub struct ConnectionArgs {
     #[cfg(feature = "websocket")]
     #[arg(long)]
     pub websocket: bool,
+
+    /// Topic for the broker to publish a Will Message to if this connection
+    /// drops uncleanly (3.1.2.5). Needed for a Will at all; the other
+    /// --will-* flags refine it.
+    #[arg(long, value_name = "TOPIC")]
+    pub will_topic: Option<String>,
+
+    /// Will Message payload. Omitted, the Will payload is empty.
+    #[arg(long, value_name = "PAYLOAD", requires = "will_topic")]
+    pub will_payload: Option<String>,
+
+    /// Quality of Service for the Will Message: 0, 1 or 2.
+    #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u8).range(0..=2), requires = "will_topic")]
+    pub will_qos: u8,
+
+    /// Ask the broker to retain the Will Message.
+    #[arg(long, requires = "will_topic")]
+    pub will_retain: bool,
 }
 
 /// Hand-written rather than derived so a future `{:?}` on parsed args — a
@@ -204,6 +222,10 @@ impl std::fmt::Debug for ConnectionArgs {
             .field("insecure", &self.insecure);
         #[cfg(feature = "websocket")]
         d.field("websocket", &self.websocket);
+        d.field("will_topic", &self.will_topic)
+            .field("will_payload", &self.will_payload)
+            .field("will_qos", &self.will_qos)
+            .field("will_retain", &self.will_retain);
         d.finish()
     }
 }
@@ -280,6 +302,27 @@ impl ConnectionArgs {
             };
             bytes.into()
         }))
+    }
+
+    /// The Will Message to attach to CONNECT, when `--will-topic` was given.
+    /// `--will-payload`, `--will-qos` and `--will-retain` all
+    /// `requires = "will_topic"` at the clap layer, so there is nothing
+    /// left here to validate.
+    pub fn will(&self) -> Option<crate::mqtt::packet::Will> {
+        let topic = self.will_topic.clone()?;
+        Some(crate::mqtt::packet::Will {
+            qos: crate::mqtt::types::QoS::from_u8(self.will_qos)
+                .expect("clap's range(0..=2) already validated --will-qos"),
+            retain: self.will_retain,
+            properties: crate::mqtt::codec::Properties::new(),
+            topic,
+            payload: self
+                .will_payload
+                .as_deref()
+                .unwrap_or("")
+                .as_bytes()
+                .to_vec(),
+        })
     }
 
     /// Whether any password source is configured, without reading it — a
@@ -826,5 +869,33 @@ mod tests {
             );
         });
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn no_will_topic_means_no_will() {
+        let conn = conn_from(&["pulsemq-cli", "pub", "-t", "x"]);
+        assert!(conn.will().is_none());
+    }
+
+    #[test]
+    fn will_topic_alone_builds_a_will_with_default_qos_and_retain() {
+        let conn = conn_from(&["pulsemq-cli", "pub", "-t", "x", "--will-topic", "bye"]);
+        let will = conn.will().expect("a Will was configured");
+        assert_eq!(will.topic, "bye");
+        assert!(will.payload.is_empty());
+        assert_eq!(will.qos, crate::mqtt::types::QoS::AtMostOnce);
+        assert!(!will.retain);
+    }
+
+    /// `--will-payload`/`--will-qos`/`--will-retain` without `--will-topic`
+    /// is meaningless — clap rejects it before a connection is opened.
+    #[test]
+    fn will_flags_without_will_topic_are_rejected() {
+        assert!(
+            Cli::try_parse_from(["pulsemq-cli", "pub", "-t", "x", "--will-payload", "bye",])
+                .is_err()
+        );
+        assert!(Cli::try_parse_from(["pulsemq-cli", "pub", "-t", "x", "--will-qos", "1"]).is_err());
+        assert!(Cli::try_parse_from(["pulsemq-cli", "pub", "-t", "x", "--will-retain"]).is_err());
     }
 }

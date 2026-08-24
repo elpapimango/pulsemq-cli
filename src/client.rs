@@ -67,7 +67,7 @@ where
             p
         },
         client_id: client_id.to_string(),
-        will: None,
+        will: args.will(),
         username: args.user.clone(),
         password,
     };
@@ -264,6 +264,87 @@ mod tests {
             Some(crate::cli::DEFAULT_MAX_PACKET_SIZE),
             "CONNECT must carry the ceiling the client enforces"
         );
+    }
+
+    #[tokio::test]
+    async fn connect_carries_no_will_by_default() {
+        let (mut client_side, mut broker_side) = duplex(4096);
+
+        let broker = tokio::spawn(async move {
+            let ReadOutcome::Packet(Packet::Connect(connect), _) =
+                read_packet(&mut broker_side, 65_535, ProtocolVersion::V5)
+                    .await
+                    .expect("CONNECT decodes")
+            else {
+                panic!("expected a CONNECT");
+            };
+            write_packet(
+                &mut broker_side,
+                &Packet::Connack(Connack::new(false, ReasonCode::Success)),
+                ProtocolVersion::V5,
+            )
+            .await
+            .expect("CONNACK writes");
+            connect.will.is_some()
+        });
+
+        let args = connection_args(["pulsemq-cli", "pub", "-t", "x"].as_slice());
+        handshake(&mut client_side, &args, "no-will")
+            .await
+            .expect("handshake succeeds");
+
+        assert!(!broker.await.expect("broker task joins"));
+    }
+
+    /// Regression: the CONNECT the broker actually sees must carry every
+    /// --will-* flag, not just --will-topic.
+    #[tokio::test]
+    async fn connect_carries_the_configured_will() {
+        let (mut client_side, mut broker_side) = duplex(4096);
+
+        let broker = tokio::spawn(async move {
+            let ReadOutcome::Packet(Packet::Connect(connect), _) =
+                read_packet(&mut broker_side, 65_535, ProtocolVersion::V5)
+                    .await
+                    .expect("CONNECT decodes")
+            else {
+                panic!("expected a CONNECT");
+            };
+            write_packet(
+                &mut broker_side,
+                &Packet::Connack(Connack::new(false, ReasonCode::Success)),
+                ProtocolVersion::V5,
+            )
+            .await
+            .expect("CONNACK writes");
+            connect.will.expect("a Will was configured")
+        });
+
+        let args = connection_args(
+            [
+                "pulsemq-cli",
+                "pub",
+                "-t",
+                "x",
+                "--will-topic",
+                "clients/gone",
+                "--will-payload",
+                "offline",
+                "--will-qos",
+                "1",
+                "--will-retain",
+            ]
+            .as_slice(),
+        );
+        handshake(&mut client_side, &args, "will-haver")
+            .await
+            .expect("handshake succeeds");
+
+        let will = broker.await.expect("broker task joins");
+        assert_eq!(will.topic, "clients/gone");
+        assert_eq!(will.payload, b"offline");
+        assert_eq!(will.qos, crate::mqtt::types::QoS::AtLeastOnce);
+        assert!(will.retain);
     }
 
     /// duplex stands in for a socket and the test needs no broker.
