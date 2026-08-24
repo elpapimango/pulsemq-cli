@@ -196,28 +196,36 @@ impl ConnectionArgs {
     /// rejects the two together), then `PULSEMQ_PASSWORD`. The environment
     /// comes last so that a variable left in a shell profile cannot quietly
     /// override the credential someone just typed.
-    pub fn password(&self) -> std::io::Result<Option<Vec<u8>>> {
+    ///
+    /// Returns `SecretBytes` rather than a plain `Vec<u8>` so the buffer is
+    /// zeroed once the caller drops it (typically right after the CONNECT
+    /// that carries it is encoded) instead of sitting in memory until the
+    /// process exits.
+    pub fn password(&self) -> std::io::Result<Option<crate::mqtt::secret::SecretBytes>> {
         if let Some(path) = &self.password_file {
             warn_if_readable_by_others(path);
             let mut bytes = std::fs::read(path)?;
             while matches!(bytes.last(), Some(b'\n' | b'\r')) {
                 bytes.pop();
             }
-            return Ok(Some(bytes));
+            return Ok(Some(bytes.into()));
         }
         if let Some(password) = &self.password {
-            return Ok(Some(password.as_bytes().to_vec()));
+            return Ok(Some(password.as_bytes().to_vec().into()));
         }
         Ok(std::env::var_os(PASSWORD_ENV_VAR).map(|v| {
-            #[cfg(unix)]
-            {
-                use std::os::unix::ffi::OsStrExt;
-                v.as_bytes().to_vec()
-            }
-            #[cfg(not(unix))]
-            {
-                v.to_string_lossy().into_owned().into_bytes()
-            }
+            let bytes = {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::ffi::OsStrExt;
+                    v.as_bytes().to_vec()
+                }
+                #[cfg(not(unix))]
+                {
+                    v.to_string_lossy().into_owned().into_bytes()
+                }
+            };
+            bytes.into()
         }))
     }
 }
@@ -261,9 +269,38 @@ pub struct SubArgs {
     #[arg(long)]
     pub show_topic: bool,
 
-    /// Exit after this many messages. Omitted, run until interrupted.
+    /// Exit after this many messages. Omitted, run until interrupted (subject
+    /// to `--max-messages`).
     #[arg(short = 'n', long, value_name = "N")]
     pub count: Option<u64>,
+
+    /// Hard ceiling on messages received before exiting regardless of
+    /// `--count`, so a hostile or misbehaving broker cannot hold the
+    /// terminal open forever by default. 0 removes the ceiling.
+    #[arg(long, default_value_t = DEFAULT_MAX_MESSAGES, value_name = "N")]
+    pub max_messages: u64,
+}
+
+/// Default for `--max-messages`: generous enough that no real workflow hits
+/// it, finite enough that an unbounded `sub` isn't the silent default
+/// (Security audit, item 1: "no ceiling on how long a hostile broker can
+/// hold the terminal").
+pub const DEFAULT_MAX_MESSAGES: u64 = 1_000_000;
+
+impl SubArgs {
+    /// The smaller of `--count` and `--max-messages`, treating an absent
+    /// `--count` and a zero `--max-messages` both as "no limit from this
+    /// source." `None` means genuinely unbounded — only reachable by
+    /// explicitly passing `--max-messages 0` with no `--count`.
+    pub fn effective_limit(&self) -> Option<u64> {
+        let ceiling = (self.max_messages != 0).then_some(self.max_messages);
+        match (self.count, ceiling) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        }
+    }
 }
 
 #[derive(Args, Debug)]
@@ -509,6 +546,66 @@ mod tests {
         }
     }
 
+    fn sub_from(argv: &[&str]) -> SubArgs {
+        match Cli::parse_from(argv).command {
+            Command::Sub(args) => args,
+            _ => panic!("expected the sub subcommand"),
+        }
+    }
+
+    /// `sub` with no flags at all must not be unbounded: the security audit
+    /// named "no ceiling on how long a hostile broker can hold the
+    /// terminal" as an open gap, and `--max-messages` defaulting to
+    /// something finite is what closes it.
+    #[test]
+    fn sub_defaults_to_a_finite_message_ceiling_not_unbounded() {
+        let args = sub_from(&["pulsemq-cli", "sub", "-t", "x"]);
+        assert_eq!(args.max_messages, DEFAULT_MAX_MESSAGES);
+        assert_eq!(args.effective_limit(), Some(DEFAULT_MAX_MESSAGES));
+    }
+
+    #[test]
+    fn max_messages_zero_means_genuinely_unbounded() {
+        let args = sub_from(&["pulsemq-cli", "sub", "-t", "x", "--max-messages", "0"]);
+        assert_eq!(args.effective_limit(), None);
+    }
+
+    /// `--count` and `--max-messages` both apply; whichever is smaller wins.
+    #[test]
+    fn effective_limit_is_the_smaller_of_count_and_max_messages() {
+        let args = sub_from(&[
+            "pulsemq-cli",
+            "sub",
+            "-t",
+            "x",
+            "-n",
+            "5",
+            "--max-messages",
+            "10",
+        ]);
+        assert_eq!(args.effective_limit(), Some(5));
+
+        let args = sub_from(&[
+            "pulsemq-cli",
+            "sub",
+            "-t",
+            "x",
+            "-n",
+            "50",
+            "--max-messages",
+            "10",
+        ]);
+        assert_eq!(args.effective_limit(), Some(10));
+    }
+
+    /// Regression: `-n 0` (or an equivalently-zero effective limit) must be
+    /// detectable before the first `recv`, not only after one arrives.
+    #[test]
+    fn a_count_of_zero_is_a_satisfied_limit() {
+        let args = sub_from(&["pulsemq-cli", "sub", "-t", "x", "-n", "0"]);
+        assert_eq!(args.effective_limit(), Some(0));
+    }
+
     /// The default is the point of the whole option: left at the protocol
     /// maximum, a broker can declare a 256 MB Remaining Length and make this
     /// tool allocate that much before sending a single payload byte.
@@ -554,7 +651,7 @@ mod tests {
     fn an_explicit_password_wins_over_the_environment() {
         temp_env_password("from-the-environment", || {
             let conn = conn_from(&["pulsemq-cli", "pub", "-t", "x", "--password", "typed"]);
-            assert_eq!(conn.password().unwrap().unwrap(), b"typed");
+            assert_eq!(conn.password().unwrap().unwrap().as_slice(), b"typed");
         });
     }
 
@@ -562,7 +659,10 @@ mod tests {
     fn the_environment_supplies_the_password_when_no_flag_does() {
         temp_env_password("from-the-environment", || {
             let conn = conn_from(&["pulsemq-cli", "pub", "-t", "x"]);
-            assert_eq!(conn.password().unwrap().unwrap(), b"from-the-environment");
+            assert_eq!(
+                conn.password().unwrap().unwrap().as_slice(),
+                b"from-the-environment"
+            );
         });
     }
 
@@ -625,7 +725,10 @@ mod tests {
                 "--password-file",
                 path.to_str().unwrap(),
             ]);
-            assert_eq!(conn.password().unwrap().unwrap(), b"from-the-file");
+            assert_eq!(
+                conn.password().unwrap().unwrap().as_slice(),
+                b"from-the-file"
+            );
         });
         let _ = std::fs::remove_file(&path);
     }

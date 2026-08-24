@@ -38,7 +38,7 @@ fn seeds() -> Vec<Vec<u8>> {
         client_id: "seed-client".into(),
         will: None,
         username: Some("user".into()),
-        password: Some(b"pass".to_vec()),
+        password: Some(b"pass".to_vec().into()),
     });
 
     let publish = Packet::Publish(Publish {

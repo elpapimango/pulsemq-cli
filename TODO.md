@@ -2,24 +2,16 @@
 
 Ordered. Pick the top item.
 
-## 1. Security audit — remaining items
+## 1. Security audit — remaining item
 
-The first pass is done; see "Done" below for what it changed. What it did not
-close:
+The first two passes are done; see "Done" below for what they changed. What
+they did not close:
 
-- **Credential lifetime** — the password lives in a `Vec<u8>` until drop rather
-  than being zeroed once the CONNECT is encoded. Doing it properly means either
-  the `zeroize` dependency or a hand-written `Drop`, and neither stops the
-  compiler from having left a copy behind during a move or a realloc. Decide
-  whether the guarantee is worth the dependency.
-- **Unbounded `sub`** — `sub` without `--count` runs forever and buffers
-  nothing, so there is no leak, but there is also no ceiling on how long a
-  hostile broker can hold the terminal. Decide whether a `--max-messages` or a
-  time limit belongs here.
-- **Plaintext warning** — nothing says credentials are crossing the wire in the
-  clear. Deliberately left out for now: until TLS exists (item 2) the warning
-  would fire on every authenticated connection and be trained away. Revisit
-  when there is an alternative to point at.
+- **Plaintext warning** — nothing says credentials are crossing the wire in
+  the clear. Deliberately left out until TLS exists (item 2), so the warning
+  has an alternative to point at rather than firing on every authenticated
+  connection and being trained away. Lands alongside item 2.
+
 ## 2. TLS and mutual TLS
 
 `--cafile`, `--cert`, `--key`, `--insecure`, and a default port of 8883 when TLS
@@ -65,16 +57,7 @@ again.
 side while the ack side owns the read half; the plan for that is a small mpsc
 of packet identifiers awaiting PUBREL, drained between publishes.
 
-## 9. `-n 0` / `--count 0` blocks instead of exiting immediately
-
-`sub -n 0` and `request -n 0` both check the message count only *after*
-receiving a message (`src/subscribe.rs` and `src/request.rs`), so `-n 0`
-still blocks waiting for one message before it can exit, rather than exiting
-immediately as the flag's own meaning implies. Check the count before the
-first `recv` too, or reject `0` at the clap layer if zero is meaningless for
-these commands.
-
-## 10. CI: dependency audit and non-Linux coverage
+## 9. CI: dependency audit and non-Linux coverage
 
 `.github/workflows/ci.yml` runs fmt/clippy/build/test/offline-build, all on
 `ubuntu-latest`. Two gaps:
@@ -86,7 +69,7 @@ these commands.
   password-file warning, environment variable byte handling) has no CI runner
   that exercises the `not(unix)` branch, so it can silently rot.
 
-## 11. Stale comment in `src/mqtt/packet/publish.rs`
+## 10. Stale comment in `src/mqtt/packet/publish.rs`
 
 The doc comment on `Publish::payload` (lines 21–26) describes broker-only
 behaviour that does not exist in this crate — "routing builds one `Publish`
@@ -120,3 +103,13 @@ longer applies here.
   `bench::subscriber` uses `Instant::checked_add` instead of `+` on the
   broker-controlled `elapsed_ns` header field, so an implausible or hostile
   value is treated as no header rather than panicking the task.
+- **Security audit, third pass** — credential lifetime: a hand-rolled
+  `SecretBytes` (`src/mqtt/secret.rs`) zeroes the CONNECT password on drop
+  via `std::ptr::write_volatile` plus a compiler fence, no new dependency.
+  Unbounded `sub`: a new `--max-messages` ceiling (default 1,000,000, `0`
+  disables it) closes the "hostile broker holds the terminal forever"
+  default; combined with `--count` via the smaller of the two. Fixed
+  `sub -n 0` blocking for one message before exiting — the effective limit
+  is now checked before the first `recv`, not only after one arrives. (On
+  inspection, `request -n 0` never had this bug: its loop already checks the
+  count before each `recv`.)

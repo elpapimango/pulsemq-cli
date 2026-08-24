@@ -2,6 +2,7 @@
 
 use crate::mqtt::codec::{Properties, Reader, Writer};
 use crate::mqtt::error::{malformed, protocol, Result};
+use crate::mqtt::secret::SecretBytes;
 use crate::mqtt::types::{ProtocolVersion, QoS, ReasonCode};
 
 /// The Will Message carried in a CONNECT payload (3.1.3.2 – 3.1.3.4).
@@ -24,7 +25,7 @@ pub struct Connect {
     pub client_id: String,
     pub will: Option<Will>,
     pub username: Option<String>,
-    pub password: Option<Vec<u8>>,
+    pub password: Option<SecretBytes>,
 }
 
 impl Connect {
@@ -84,7 +85,7 @@ impl Connect {
 
         let username = if username_flag { Some(r.utf8()?) } else { None };
         let password = if password_flag {
-            Some(r.binary()?)
+            Some(SecretBytes::from(r.binary()?))
         } else {
             None
         };

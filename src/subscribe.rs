@@ -15,9 +15,17 @@ pub async fn run(args: SubArgs) -> Result<()> {
         return Err(Error::Usage("sub needs at least one --topic".into()));
     }
     let qos = QoS::from_u8(args.qos)?;
+    let limit = args.effective_limit();
 
     let mut client = Client::connect(&args.conn).await?;
     subscribe(&mut client, &args.topic, qos).await?;
+
+    // An already-satisfied limit (`-n 0`, or `--max-messages` left at 0's
+    // sibling case) must exit before the first `recv`, not after it — a
+    // limit checked only post-receipt still blocks for one message.
+    if limit == Some(0) {
+        return client.disconnect().await;
+    }
 
     let mut seen = 0u64;
     loop {
@@ -26,7 +34,7 @@ pub async fn run(args: SubArgs) -> Result<()> {
                 acknowledge(&mut client, &p).await?;
                 print_message(&p, args.show_topic);
                 seen += 1;
-                if args.count.is_some_and(|c| seen >= c) {
+                if limit.is_some_and(|c| seen >= c) {
                     break;
                 }
             }

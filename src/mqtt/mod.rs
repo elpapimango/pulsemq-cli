@@ -21,4 +21,5 @@ pub mod codec;
 pub mod error;
 pub mod framing;
 pub mod packet;
+pub mod secret;
 pub mod types;
