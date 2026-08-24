@@ -43,9 +43,9 @@ Name things after what they do, and keep protocol-derived identifiers as the
 spec spells them (packet and property names) rather than renaming them to match
 the product.
 
-Planned work is in [`TODO.md`](TODO.md) — item 1 is a **security audit**
-(credential handling and the untrusted-input path). It is the next item, and
-comes before new transports or flags.
+Planned work is in [`TODO.md`](TODO.md), ordered — pick the top item. It is
+currently empty; add new items there as they come up rather than tracking
+them only in conversation.
 
 ## Commands
 
@@ -56,17 +56,25 @@ cargo fmt --all -- --check                              # formatting
 cargo clippy --all-targets --all-features -- -D warnings # lints
 ```
 
-Keep all four green. No step needs a broker checkout.
+Keep all four green — clippy already runs with `--all-features`, but
+`build`/`test` above default to no features, so also run
+`cargo build --all-features` and `cargo test --all-features` before calling
+`tls`- or `websocket`-touching work done; CI runs both variants. No step
+needs a broker checkout.
 
-`.github/workflows/ci.yml` runs exactly these four on every push and pull
-request to `main`, with `RUSTFLAGS: -D warnings`, plus one more: an
-`--offline` build. That last step is the standing guard on this crate's
-independence — if a broker path dependency ever comes back, it fails there
-rather than in someone's fresh clone.
+`.github/workflows/ci.yml` runs fmt, clippy, and default- and all-features
+build/test on every push and pull request to `main`, with
+`RUSTFLAGS: -D warnings`, plus an `--offline --all-features` build (the
+standing guard on this crate's independence — if a broker path dependency
+ever comes back, it fails there rather than in someone's fresh clone), a
+`rustsec/audit-check` job against the dependency tree, and a `windows-latest`
+job that exercises `cli.rs`'s `#[cfg(not(unix))]` branch.
 
-There are no automated end-to-end tests yet (`TODO.md` item 7). To exercise the
-real path you need some broker running — any spec-conformant one will do. With
-a PulseMQ checked out at `../pulsemq`:
+`tests/e2e.rs` runs the publish/subscribe and request/reply round trips
+against a real broker — `../pulsemq`, if a sibling checkout exists, built and
+spawned on a scratch port at test *run* time, not a build step. No sibling
+checkout: both tests print why and return immediately, so `cargo test` in a
+fresh clone stays green. To do the same thing by hand:
 
 ```bash
 cargo build --manifest-path ../pulsemq/Cargo.toml --bin pulsemq
@@ -76,8 +84,9 @@ cargo run -- sub -b 127.0.0.1 -p 18830 -t 'test/#' -q 1 --show-topic -n 1 &
 cargo run -- pub -b 127.0.0.1 -p 18830 -t test/a -m hello -q 1
 ```
 
-That is a manual smoke test, not a build step: nothing in `cargo build`,
-`cargo test`, `fmt` or `clippy` reads `../pulsemq`.
+Nothing in `cargo build`, `fmt` or `clippy` reads `../pulsemq`; `cargo test`
+does, via `tests/e2e.rs`, but only at run time and only when the checkout is
+there to find.
 
 Subscribe before publishing: without a retained message, a subscriber that
 arrives late gets nothing, and a test that races this way looks like a client
@@ -93,10 +102,19 @@ src/mqtt/         the wire format, and nothing above it:
                     framing   read_packet / write_packet over AsyncRead/Write
                     types     ProtocolVersion, QoS, ReasonCode
                     error     MqttError: Malformed / Protocol / Reason / Io
+                    secret    SecretBytes: zeroed on drop (the CONNECT password)
 src/cli.rs        clap surface: ConnectionArgs (flattened into every subcommand)
                   plus PubArgs / SubArgs / RequestArgs / BenchArgs, and Protocol
-src/client.rs     dial + CONNECT handshake + send/recv + packet-id allocation
-src/publish.rs    pub: PUBLISH, then finish the QoS 1/2 handshake
+src/transport.rs  Stream: plain TCP, TLS (`tls` feature), WebSocket
+                  (`websocket` feature), or both for wss:// — one
+                  AsyncRead/AsyncWrite behind transport::connect(), the one
+                  place that dials, for Client and bench alike
+                    tls.rs    cert/key loading, --insecure, the ClientConfig
+                    ws.rs     WsByteStream: WebSocketStream as a byte stream
+src/client.rs     dial (via transport::connect) + CONNECT handshake +
+                  send/recv + packet-id allocation
+src/publish.rs    pub: PUBLISH, then finish the QoS 1/2 handshake; --file /
+                  --stdin-lines resolve to a payload source before connecting
 src/subscribe.rs  sub: SUBSCRIBE, print, acknowledge — reused by request
 src/request.rs    request: subscribe, publish request, wait for the reply
 src/bench/        bench, the only concurrent subcommand:
@@ -108,6 +126,8 @@ src/bench/        bench, the only concurrent subcommand:
                     subscriber.rs one subscriber: subscribe, receive, ack, time
 src/error.rs      Usage / Rejected{code} / Disconnected / Unsupported / Mqtt
 tests/malformed.rs  the decoder must never panic on hostile bytes
+tests/e2e.rs        publish/subscribe and request/reply against a real
+                    broker, discovered at run time (see Commands above)
 ```
 
 `src/mqtt` is the layering boundary: it may not know anything about `cli`,
@@ -146,11 +166,20 @@ CONNECT, because `read_packet` sizes its buffer from the length the broker
 declares. Anything new that reads packets takes that value rather than reaching
 for a constant.
 
-`bench` does not use `Client`. It calls `client::handshake` on a `TcpStream`,
-then splits the socket so a publisher can write and read acknowledgements at
-once — the concurrency the simple commands deliberately avoid. Keep that
-division: `pub`, `sub` and `request` stay sequential and easy to read, and the
-concurrent machinery stays in `src/bench/`.
+`bench` does not use `Client`. It calls `transport::connect` directly and then
+`client::handshake` on the resulting `Stream`, then splits it (`Stream::into_split`)
+so a publisher can write and read acknowledgements at once — the concurrency
+the simple commands deliberately avoid. Keep that division: `pub`, `sub` and
+`request` stay sequential and easy to read, and the concurrent machinery stays
+in `src/bench/`.
+
+`transport::connect` is the one place that dials, for `Client` and `bench`
+alike — a transport added there serves both without being wired into each
+separately. `Stream::into_split` keeps `TcpStream::into_split()`'s zero-cost
+path (no synchronization) for plain TCP and only pays `tokio::io::split`'s
+generic, mutex-backed path when TLS or WebSocket is active, since `bench`
+measures the broker and the harness must not add overhead of its own to what
+it measures.
 
 Runtime choice is per subcommand in `main.rs`: current-thread for the three
 simple commands, multi-threaded for `bench`. A load generator on one core
@@ -169,7 +198,10 @@ The connection surface these tools have to cover.
   port; WebSockets and WebSockets-over-TLS on a second port. Both ports can run
   at once against the same sessions. The WebSocket handshake requires the `mqtt`
   subprotocol — a client that omits it is rejected at the HTTP layer, before any
-  MQTT packet is exchanged.
+  MQTT packet is exchanged. All five are implemented: `--tls`/`--cafile`/
+  `--cert`/`--key`/`--insecure` behind the `tls` Cargo feature, `--websocket`
+  behind `websocket` (composing with `--tls` for wss://) — see
+  `src/transport.rs`.
 - **Authentication**, in the broker's order of precedence: username/password
   (PBKDF2-HMAC-SHA256) if the broker has a password file, else the mutual-TLS
   client-cert CN, else `anonymous` — which the broker may refuse outright. A
@@ -183,9 +215,12 @@ The connection surface these tools have to cover.
 
 Everything the broker sends is untrusted input — a hostile or man-in-the-middle
 broker reaches the codec, the packet size limit and the terminal. That is why
-the security audit is `TODO.md` item 1, why the decoder is now this repo's own
-code to audit, and why new parsing code needs a case in `tests/malformed.rs`
-alongside it.
+the decoder is this repo's own code to audit rather than an external
+dependency's, and why new parsing code needs a case in `tests/malformed.rs`
+alongside it. See `TODO.md`'s "Done" section for what the security audit has
+already covered (credential handling, packet-size limits, terminal escaping,
+TLS certificate verification, and more) and check `TODO.md` itself before
+assuming a gap is still open.
 
 ## Conventions
 
