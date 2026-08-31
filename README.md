@@ -1,4 +1,4 @@
-# pulsemq-cli
+# wispmq-cli
 
 > **⚠ Work in progress.** Written with heavy help from Claude (Anthropic's
 > AI) — code, tests and docs. Not yet battle-tested. Use at your own risk;
@@ -25,27 +25,27 @@ No other checkout, no C toolchain, no system libraries. The dependencies are
 
 ```bash
 # publish
-pulsemq-cli pub --broker localhost --topic sensors/temp --message 21.5 --qos 1
+wispmq-cli pub --broker localhost --topic sensors/temp --message 21.5 --qos 1
 
 # subscribe, printing the topic before each payload, exit after 10 messages
-pulsemq-cli sub --topic 'sensors/#' --qos 1 --show-topic --count 10
+wispmq-cli sub --topic 'sensors/#' --qos 1 --show-topic --count 10
 
 # request/reply: subscribes to the reply topic before sending the request
-pulsemq-cli request --topic service/request --reply-topic service/reply -m ping
+wispmq-cli request --topic service/request --reply-topic service/reply -m ping
 
 # speak an older protocol version
-pulsemq-cli pub --topic test --message hello --protocol 3.1.1
+wispmq-cli pub --topic test --message hello --protocol 3.1.1
 
 # measure a broker: 4 publishers, 2 subscribers, 20k messages at QoS 1
-pulsemq-cli bench --publishers 4 --subscribers 2 --count 20000 --qos 1
+wispmq-cli bench --publishers 4 --subscribers 2 --count 20000 --qos 1
 
 # hold 500 messages/second for 30 seconds and emit a machine-readable report
-pulsemq-cli bench --duration 30 --rate 500 --subscribers 1 --json
+wispmq-cli bench --duration 30 --rate 500 --subscribers 1 --json
 ```
 
 Short forms exist for what gets typed often: `-b` broker, `-p` port, `-t` topic,
 `-m` message, `-q` QoS, `-r` retain, `-i` client id, `-u` user, `-k` keepalive,
-`-n` count. `pulsemq-cli <command> --help` lists the rest.
+`-n` count. `wispmq-cli <command> --help` lists the rest.
 
 Payloads are written to stdout as received, without a UTF-8 conversion. Exit
 status is 0 on success and 1 on any error, with the reason on stderr —
@@ -71,7 +71,7 @@ sequences that move the cursor, repaint the screen, or rewrite output you
 already read. Printable text, multi-byte UTF-8 included, is untouched.
 
 **Credentials.** In order of precedence: `--password-file`, then `--password`,
-then the `PULSEMQ_PASSWORD` environment variable. The environment comes last so
+then the `WISPMQ_PASSWORD` environment variable. The environment comes last so
 a variable left in a shell profile cannot override what you just typed.
 `--password` is visible in `ps` output and in shell history; the file and the
 variable are not. A password file readable by anyone but its owner earns a

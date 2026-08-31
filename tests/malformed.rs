@@ -11,9 +11,9 @@
 //! decoder branches than uniform noise, which almost always dies on the first
 //! length check.
 
-use pulsemq_cli::mqtt::codec::Properties;
-use pulsemq_cli::mqtt::packet::{Connect, Packet, Publish, Subscribe, TopicFilter};
-use pulsemq_cli::mqtt::types::{
+use wispmq_cli::mqtt::codec::Properties;
+use wispmq_cli::mqtt::packet::{Connect, Packet, Publish, Subscribe, TopicFilter};
+use wispmq_cli::mqtt::types::{
     ProtocolVersion::{self, V3_1, V3_1_1, V5},
     QoS,
 };
@@ -59,7 +59,7 @@ fn seeds() -> Vec<Vec<u8>> {
             qos: QoS::ExactlyOnce,
             no_local: true,
             retain_as_published: false,
-            retain_handling: pulsemq_cli::mqtt::packet::RetainHandling::SendAtSubscribe,
+            retain_handling: wispmq_cli::mqtt::packet::RetainHandling::SendAtSubscribe,
         }],
     });
 
@@ -226,7 +226,7 @@ fn round_trip_seeds_still_decode() {
 /// bytes of header and then nothing.
 #[tokio::test]
 async fn an_oversized_declared_length_is_refused_without_allocating_it() {
-    use pulsemq_cli::mqtt::framing::read_packet;
+    use wispmq_cli::mqtt::framing::read_packet;
 
     // PUBLISH with a Remaining Length of 200 MB, and no body at all.
     let header = [0x30u8, 0x80, 0x80, 0x80, 0x60];
@@ -243,7 +243,7 @@ async fn an_oversized_declared_length_is_refused_without_allocating_it() {
     match result {
         Err(e) => assert_eq!(
             e.reason_code(),
-            pulsemq_cli::mqtt::types::ReasonCode::PacketTooLarge,
+            wispmq_cli::mqtt::types::ReasonCode::PacketTooLarge,
             "wrong reason: {e}"
         ),
         Ok(_) => panic!("a packet over the ceiling must be refused"),

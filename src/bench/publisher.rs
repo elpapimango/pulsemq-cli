@@ -529,7 +529,7 @@ mod tests {
     fn connection_args(port: u16) -> ConnectionArgs {
         let port = port.to_string();
         let cli =
-            crate::cli::Cli::parse_from(["pulsemq-cli", "bench", "-b", "127.0.0.1", "-p", &port]);
+            crate::cli::Cli::parse_from(["wispmq-cli", "bench", "-b", "127.0.0.1", "-p", &port]);
         let crate::cli::Command::Bench(args) = cli.command else {
             panic!("expected the bench subcommand");
         };
@@ -543,7 +543,7 @@ mod tests {
         let broker = tokio::spawn(ack_everything(listener));
 
         let config = Arc::new(config_for(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "bench",
             "--count",
             "10",
@@ -595,7 +595,7 @@ mod tests {
         let broker = tokio::spawn(qos2_handshake(listener));
 
         let config = Arc::new(config_for(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "bench",
             "--count",
             "10",
@@ -642,7 +642,7 @@ mod tests {
 
         // A duration run has no quota: only the stop signal ends it.
         let config = Arc::new(config_for(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "bench",
             "--duration",
             "600",
@@ -684,7 +684,7 @@ mod tests {
         let broker = tokio::spawn(ack_everything(listener));
 
         let config = Arc::new(config_for(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "bench",
             "--count",
             "5",
@@ -728,7 +728,7 @@ mod tests {
         // A huge quota and no rate cap: nothing but the in-flight window
         // itself can stop this publisher from racing ahead.
         let config = Arc::new(config_for(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "bench",
             "--count",
             "1000",

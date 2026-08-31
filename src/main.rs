@@ -1,8 +1,8 @@
 use std::process::ExitCode;
 
 use clap::Parser;
-use pulsemq_cli::cli::{Cli, Command};
-use pulsemq_cli::{bench, publish, request, subscribe};
+use wispmq_cli::cli::{Cli, Command};
+use wispmq_cli::{bench, publish, request, subscribe};
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -22,7 +22,7 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("pulsemq-cli: {e}");
+            eprintln!("wispmq-cli: {e}");
             ExitCode::FAILURE
         }
     }

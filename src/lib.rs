@@ -1,4 +1,4 @@
-//! `pulsemq-cli` — a command-line MQTT client.
+//! `wispmq-cli` — a command-line MQTT client.
 //!
 //! The wire format lives in `mqtt` (`packet`, `codec`, `framing`, `types`) and
 //! knows nothing about the client above it. The rest of the crate is the

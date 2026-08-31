@@ -49,7 +49,7 @@ jobs:
       - name: Test (all features)
         run: cargo test --locked --all-features --verbose
 
-      # This crate has no dependency on the PulseMQ broker: no path
+      # This crate has no dependency on the WispMQ broker: no path
       # dependency, no sibling checkout, no vendored build step. `--offline`
       # after a `--locked` fetch proves the whole build resolves from
       # Cargo.lock alone, so a re-coupling would fail here rather than in
@@ -71,7 +71,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
   # cli.rs has a #[cfg(unix)] / #[cfg(not(unix))] split (the world-readable
-  # password-file warning, PULSEMQ_PASSWORD's byte handling) that the
+  # password-file warning, WISPMQ_PASSWORD's byte handling) that the
   # ubuntu-only job above never exercises. Default features only: the point
   # is the cfg(not(unix)) branch, not a full cross-platform feature matrix,
   # and TLS/WebSocket bring in platform-specific bits (e.g. the Windows

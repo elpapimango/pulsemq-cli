@@ -1,4 +1,4 @@
-//! `pulsemq-cli sub` — subscribe, then print messages until interrupted or
+//! `wispmq-cli sub` — subscribe, then print messages until interrupted or
 //! until `--count` of them have arrived.
 
 use std::io::Write;

@@ -12,7 +12,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "pulsemq-cli",
+    name = "wispmq-cli",
     version,
     about = "Command-line MQTT client: publish, subscribe, request/response"
 )]
@@ -42,7 +42,7 @@ pub enum Command {
 /// and then sending nothing: `framing::read_packet` sizes its buffer from the
 /// declared length before any payload byte arrives. Everything the broker
 /// sends is untrusted input, so the ceiling is set here rather than taken on
-/// the broker's word. 1 MiB matches PulseMQ's own default; a run that needs
+/// the broker's word. 1 MiB matches WispMQ's own default; a run that needs
 /// more says so explicitly.
 pub const DEFAULT_MAX_PACKET_SIZE: u32 = 1024 * 1024;
 
@@ -57,7 +57,7 @@ pub const PROTOCOL_MAX_PACKET_SIZE: u32 = 268_435_455;
 /// output and in shell history, and `--password-file` needs a file to exist
 /// somewhere. An environment variable does neither, though it is still visible
 /// to anything that can read this process's environment.
-pub const PASSWORD_ENV_VAR: &str = "PULSEMQ_PASSWORD";
+pub const PASSWORD_ENV_VAR: &str = "WISPMQ_PASSWORD";
 
 /// Warn when a password file is readable by anyone but its owner.
 ///
@@ -85,7 +85,7 @@ fn warn_if_readable_by_others(path: &std::path::Path) {
     if mode & 0o077 != 0 {
         WARNED.call_once(|| {
             eprintln!(
-                "pulsemq-cli: warning: {} is readable by others (mode {:04o}); \
+                "wispmq-cli: warning: {} is readable by others (mode {:04o}); \
                  consider chmod 600",
                 path.display(),
                 mode & 0o7777
@@ -268,7 +268,7 @@ impl ConnectionArgs {
     /// keeps the "which source wins" question in one place.
     ///
     /// Explicit beats ambient: `--password-file`, then `--password` (clap
-    /// rejects the two together), then `PULSEMQ_PASSWORD`. The environment
+    /// rejects the two together), then `WISPMQ_PASSWORD`. The environment
     /// comes last so that a variable left in a shell profile cannot quietly
     /// override the credential someone just typed.
     ///
@@ -348,7 +348,7 @@ impl ConnectionArgs {
         if self.has_password_source() && !self.tls {
             WARNED.call_once(|| {
                 eprintln!(
-                    "pulsemq-cli: warning: sending a password without --tls; \
+                    "wispmq-cli: warning: sending a password without --tls; \
                      it crosses the network in the clear"
                 );
             });
@@ -615,19 +615,19 @@ mod tests {
             ("3.1", ProtocolVersion::V3_1),
             ("31", ProtocolVersion::V3_1),
         ] {
-            let cli = Cli::parse_from(["pulsemq-cli", "pub", "-t", "x", "--protocol", input]);
+            let cli = Cli::parse_from(["wispmq-cli", "pub", "-t", "x", "--protocol", input]);
             let Command::Pub(args) = cli.command else {
                 panic!("expected the pub subcommand");
             };
             assert_eq!(args.conn.version(), want, "for --protocol {input}");
         }
-        assert!(Cli::try_parse_from(["pulsemq-cli", "pub", "-t", "x", "--protocol", "4"]).is_err());
+        assert!(Cli::try_parse_from(["wispmq-cli", "pub", "-t", "x", "--protocol", "4"]).is_err());
     }
 
     #[test]
     fn publish_options_parse() {
         let cli = Cli::parse_from([
-            "pulsemq-cli",
+            "wispmq-cli",
             "pub",
             "-b",
             "broker.example",
@@ -658,11 +658,11 @@ mod tests {
     #[test]
     fn persistent_session_requires_a_client_id() {
         assert!(
-            Cli::try_parse_from(["pulsemq-cli", "sub", "-t", "#", "--persistent-session"]).is_err()
+            Cli::try_parse_from(["wispmq-cli", "sub", "-t", "#", "--persistent-session"]).is_err()
         );
 
         let cli = Cli::parse_from([
-            "pulsemq-cli",
+            "wispmq-cli",
             "sub",
             "-t",
             "#",
@@ -679,7 +679,7 @@ mod tests {
     #[test]
     fn password_and_password_file_conflict() {
         assert!(Cli::try_parse_from([
-            "pulsemq-cli",
+            "wispmq-cli",
             "pub",
             "-t",
             "x",
@@ -693,7 +693,7 @@ mod tests {
 
     #[test]
     fn bench_defaults_match_the_documented_ones() {
-        let cli = Cli::parse_from(["pulsemq-cli", "bench"]);
+        let cli = Cli::parse_from(["wispmq-cli", "bench"]);
         let Command::Bench(args) = cli.command else {
             panic!("expected the bench subcommand");
         };
@@ -727,14 +727,14 @@ mod tests {
     /// something finite is what closes it.
     #[test]
     fn sub_defaults_to_a_finite_message_ceiling_not_unbounded() {
-        let args = sub_from(&["pulsemq-cli", "sub", "-t", "x"]);
+        let args = sub_from(&["wispmq-cli", "sub", "-t", "x"]);
         assert_eq!(args.max_messages, DEFAULT_MAX_MESSAGES);
         assert_eq!(args.effective_limit(), Some(DEFAULT_MAX_MESSAGES));
     }
 
     #[test]
     fn max_messages_zero_means_genuinely_unbounded() {
-        let args = sub_from(&["pulsemq-cli", "sub", "-t", "x", "--max-messages", "0"]);
+        let args = sub_from(&["wispmq-cli", "sub", "-t", "x", "--max-messages", "0"]);
         assert_eq!(args.effective_limit(), None);
     }
 
@@ -742,7 +742,7 @@ mod tests {
     #[test]
     fn effective_limit_is_the_smaller_of_count_and_max_messages() {
         let args = sub_from(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "sub",
             "-t",
             "x",
@@ -754,7 +754,7 @@ mod tests {
         assert_eq!(args.effective_limit(), Some(5));
 
         let args = sub_from(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "sub",
             "-t",
             "x",
@@ -770,7 +770,7 @@ mod tests {
     /// detectable before the first `recv`, not only after one arrives.
     #[test]
     fn a_count_of_zero_is_a_satisfied_limit() {
-        let args = sub_from(&["pulsemq-cli", "sub", "-t", "x", "-n", "0"]);
+        let args = sub_from(&["wispmq-cli", "sub", "-t", "x", "-n", "0"]);
         assert_eq!(args.effective_limit(), Some(0));
     }
 
@@ -779,7 +779,7 @@ mod tests {
     /// tool allocate that much before sending a single payload byte.
     #[test]
     fn the_packet_ceiling_defaults_to_one_mebibyte_not_the_protocol_maximum() {
-        let conn = conn_from(&["pulsemq-cli", "pub", "-t", "x"]);
+        let conn = conn_from(&["wispmq-cli", "pub", "-t", "x"]);
         assert_eq!(conn.max_packet_size().unwrap(), 1024 * 1024);
         assert!(conn.max_packet_size().unwrap() < PROTOCOL_MAX_PACKET_SIZE);
     }
@@ -788,7 +788,7 @@ mod tests {
     fn the_packet_ceiling_can_be_raised_to_the_protocol_maximum() {
         let argv_max = PROTOCOL_MAX_PACKET_SIZE.to_string();
         let conn = conn_from(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "pub",
             "-t",
             "x",
@@ -802,14 +802,14 @@ mod tests {
     /// it must be refused here rather than encoded onto the wire.
     #[test]
     fn a_zero_packet_ceiling_is_refused() {
-        let conn = conn_from(&["pulsemq-cli", "pub", "-t", "x", "--max-packet-size", "0"]);
+        let conn = conn_from(&["wispmq-cli", "pub", "-t", "x", "--max-packet-size", "0"]);
         assert!(conn.max_packet_size().is_err());
     }
 
     #[test]
     fn a_packet_ceiling_above_the_protocol_maximum_is_refused() {
         let over = (PROTOCOL_MAX_PACKET_SIZE + 1).to_string();
-        let conn = conn_from(&["pulsemq-cli", "pub", "-t", "x", "--max-packet-size", &over]);
+        let conn = conn_from(&["wispmq-cli", "pub", "-t", "x", "--max-packet-size", &over]);
         assert!(conn.max_packet_size().is_err());
     }
 
@@ -818,7 +818,7 @@ mod tests {
     #[test]
     fn an_explicit_password_wins_over_the_environment() {
         temp_env_password("from-the-environment", || {
-            let conn = conn_from(&["pulsemq-cli", "pub", "-t", "x", "--password", "typed"]);
+            let conn = conn_from(&["wispmq-cli", "pub", "-t", "x", "--password", "typed"]);
             assert_eq!(conn.password().unwrap().unwrap().as_slice(), b"typed");
         });
     }
@@ -826,7 +826,7 @@ mod tests {
     #[test]
     fn the_environment_supplies_the_password_when_no_flag_does() {
         temp_env_password("from-the-environment", || {
-            let conn = conn_from(&["pulsemq-cli", "pub", "-t", "x"]);
+            let conn = conn_from(&["wispmq-cli", "pub", "-t", "x"]);
             assert_eq!(
                 conn.password().unwrap().unwrap().as_slice(),
                 b"from-the-environment"
@@ -837,7 +837,7 @@ mod tests {
     #[test]
     fn no_flag_and_no_environment_means_no_password() {
         temp_env_password_unset(|| {
-            let conn = conn_from(&["pulsemq-cli", "pub", "-t", "x"]);
+            let conn = conn_from(&["wispmq-cli", "pub", "-t", "x"]);
             assert!(conn.password().unwrap().is_none());
         });
     }
@@ -847,7 +847,7 @@ mod tests {
     /// error) can never put the cleartext password in a log.
     #[test]
     fn debug_formatting_never_shows_the_password() {
-        let conn = conn_from(&["pulsemq-cli", "pub", "-t", "x", "--password", "s3cret"]);
+        let conn = conn_from(&["wispmq-cli", "pub", "-t", "x", "--password", "s3cret"]);
         let debug = format!("{conn:?}");
         assert!(
             !debug.contains("s3cret"),
@@ -856,7 +856,7 @@ mod tests {
         assert!(debug.contains("<redacted>"), "debug output was: {debug}");
     }
 
-    /// `PULSEMQ_PASSWORD` is process-wide state, so these tests must not run
+    /// `WISPMQ_PASSWORD` is process-wide state, so these tests must not run
     /// concurrently with each other. A mutex is enough: they are the only
     /// readers and writers of it.
     fn env_lock() -> &'static std::sync::Mutex<()> {
@@ -882,11 +882,11 @@ mod tests {
     /// A file still wins over both, and its trailing newline is stripped.
     #[test]
     fn a_password_file_wins_over_the_environment() {
-        let path = std::env::temp_dir().join(format!("pulsemq-cli-pw-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!("wispmq-cli-pw-{}", std::process::id()));
         std::fs::write(&path, b"from-the-file\n").unwrap();
         temp_env_password("from-the-environment", || {
             let conn = conn_from(&[
-                "pulsemq-cli",
+                "wispmq-cli",
                 "pub",
                 "-t",
                 "x",
@@ -903,13 +903,13 @@ mod tests {
 
     #[test]
     fn no_will_topic_means_no_will() {
-        let conn = conn_from(&["pulsemq-cli", "pub", "-t", "x"]);
+        let conn = conn_from(&["wispmq-cli", "pub", "-t", "x"]);
         assert!(conn.will().is_none());
     }
 
     #[test]
     fn will_topic_alone_builds_a_will_with_default_qos_and_retain() {
-        let conn = conn_from(&["pulsemq-cli", "pub", "-t", "x", "--will-topic", "bye"]);
+        let conn = conn_from(&["wispmq-cli", "pub", "-t", "x", "--will-topic", "bye"]);
         let will = conn.will().expect("a Will was configured");
         assert_eq!(will.topic, "bye");
         assert!(will.payload.is_empty());
@@ -922,10 +922,10 @@ mod tests {
     #[test]
     fn will_flags_without_will_topic_are_rejected() {
         assert!(
-            Cli::try_parse_from(["pulsemq-cli", "pub", "-t", "x", "--will-payload", "bye",])
+            Cli::try_parse_from(["wispmq-cli", "pub", "-t", "x", "--will-payload", "bye",])
                 .is_err()
         );
-        assert!(Cli::try_parse_from(["pulsemq-cli", "pub", "-t", "x", "--will-qos", "1"]).is_err());
-        assert!(Cli::try_parse_from(["pulsemq-cli", "pub", "-t", "x", "--will-retain"]).is_err());
+        assert!(Cli::try_parse_from(["wispmq-cli", "pub", "-t", "x", "--will-qos", "1"]).is_err());
+        assert!(Cli::try_parse_from(["wispmq-cli", "pub", "-t", "x", "--will-retain"]).is_err());
     }
 }

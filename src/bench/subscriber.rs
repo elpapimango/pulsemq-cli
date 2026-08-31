@@ -258,7 +258,7 @@ mod tests {
     fn connection_args(port: u16) -> ConnectionArgs {
         let port = port.to_string();
         let cli =
-            crate::cli::Cli::parse_from(["pulsemq-cli", "bench", "-b", "127.0.0.1", "-p", &port]);
+            crate::cli::Cli::parse_from(["wispmq-cli", "bench", "-b", "127.0.0.1", "-p", &port]);
         let crate::cli::Command::Bench(args) = cli.command else {
             panic!("expected the bench subcommand");
         };
@@ -272,7 +272,7 @@ mod tests {
         let baseline = Instant::now();
         let broker = tokio::spawn(deliver(listener, 3, Duration::from_millis(50), baseline));
 
-        let config = Arc::new(config_for(&["pulsemq-cli", "bench", "--subscribers", "1"]));
+        let config = Arc::new(config_for(&["wispmq-cli", "bench", "--subscribers", "1"]));
         let counters = Arc::new(Counters::default());
         let (tx, stop) = watch::channel(false);
 
@@ -362,7 +362,7 @@ mod tests {
                 .expect("PUBLISH");
         });
 
-        let config = Arc::new(config_for(&["pulsemq-cli", "bench", "--subscribers", "1"]));
+        let config = Arc::new(config_for(&["wispmq-cli", "bench", "--subscribers", "1"]));
         let counters = Arc::new(Counters::default());
         let (tx, stop) = watch::channel(false);
         let handle = tokio::spawn(run(
@@ -452,7 +452,7 @@ mod tests {
                 .expect("PUBLISH");
         });
 
-        let config = Arc::new(config_for(&["pulsemq-cli", "bench", "--subscribers", "1"]));
+        let config = Arc::new(config_for(&["wispmq-cli", "bench", "--subscribers", "1"]));
         let counters = Arc::new(Counters::default());
         let (tx, stop) = watch::channel(false);
         let handle = tokio::spawn(run(
@@ -534,7 +534,7 @@ mod tests {
         let port = listener.local_addr().expect("addr").port();
         let broker = tokio::spawn(subscribe_then_go_silent(listener));
 
-        let config = Arc::new(config_for(&["pulsemq-cli", "bench", "--subscribers", "1"]));
+        let config = Arc::new(config_for(&["wispmq-cli", "bench", "--subscribers", "1"]));
         let counters = Arc::new(Counters::default());
         let baseline = Instant::now();
         let (tx, stop) = watch::channel(false);
@@ -574,7 +574,7 @@ mod tests {
         let port = listener.local_addr().expect("addr").port();
         let broker = tokio::spawn(subscribe_then_go_silent(listener));
 
-        let config = Arc::new(config_for(&["pulsemq-cli", "bench", "--subscribers", "1"]));
+        let config = Arc::new(config_for(&["wispmq-cli", "bench", "--subscribers", "1"]));
         let counters = Arc::new(Counters::default());
         let baseline = Instant::now();
         let (tx, stop) = watch::channel(false);

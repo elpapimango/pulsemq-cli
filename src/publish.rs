@@ -1,4 +1,4 @@
-//! `pulsemq-cli pub` — publish one message, complete its QoS handshake, exit.
+//! `wispmq-cli pub` — publish one message, complete its QoS handshake, exit.
 //! With `--file` or `--stdin-lines`, the payload comes from somewhere other
 //! than `--message`; `--stdin-lines` publishes once per line, all over one
 //! connection.
@@ -223,7 +223,7 @@ mod tests {
     fn conn_args(port: u16) -> crate::cli::ConnectionArgs {
         let port = port.to_string();
         pub_args(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "pub",
             "-t",
             "x",
@@ -316,11 +316,10 @@ mod tests {
 
     #[test]
     fn file_reads_the_payload_from_disk() {
-        let path =
-            std::env::temp_dir().join(format!("pulsemq-cli-pub-file-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!("wispmq-cli-pub-file-{}", std::process::id()));
         std::fs::write(&path, b"from a file").unwrap();
         let args = pub_args(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "pub",
             "-t",
             "x",
@@ -337,7 +336,7 @@ mod tests {
     #[test]
     fn message_and_file_conflict_at_the_clap_layer() {
         assert!(crate::cli::Cli::try_parse_from([
-            "pulsemq-cli",
+            "wispmq-cli",
             "pub",
             "-t",
             "x",
@@ -351,7 +350,7 @@ mod tests {
 
     #[test]
     fn no_source_means_an_empty_payload() {
-        let args = pub_args(&["pulsemq-cli", "pub", "-t", "x"]);
+        let args = pub_args(&["wispmq-cli", "pub", "-t", "x"]);
         let PayloadSource::Once(payload) = resolve_payload(&args).unwrap() else {
             panic!("expected a single payload");
         };
@@ -361,7 +360,7 @@ mod tests {
     #[test]
     fn v5_properties_populate_from_the_flags() {
         let args = pub_args(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "pub",
             "-t",
             "x",
@@ -386,7 +385,7 @@ mod tests {
     #[test]
     fn a_v5_only_flag_on_v3_is_a_usage_error() {
         let args = pub_args(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "pub",
             "-t",
             "x",
@@ -404,7 +403,7 @@ mod tests {
     /// v3.1 rejection is.
     #[test]
     fn v3_without_any_v5_only_flag_is_fine() {
-        let args = pub_args(&["pulsemq-cli", "pub", "-t", "x", "--protocol", "3.1.1"]);
+        let args = pub_args(&["wispmq-cli", "pub", "-t", "x", "--protocol", "3.1.1"]);
         let properties = resolve_properties(&args).expect("no v5-only flags used");
         assert!(properties.is_empty());
     }
@@ -412,7 +411,7 @@ mod tests {
     #[test]
     fn user_property_requires_an_equals_sign() {
         assert!(crate::cli::Cli::try_parse_from([
-            "pulsemq-cli",
+            "wispmq-cli",
             "pub",
             "-t",
             "x",

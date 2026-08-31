@@ -7,7 +7,7 @@ use crate::mqtt::error::{protocol, Result};
 fn clamp_16bit<'a>(v: &'a [u8], what: &str) -> &'a [u8] {
     if v.len() > u16::MAX as usize {
         eprintln!(
-            "pulsemq-cli: {what} is {} bytes, exceeds the 65535-byte MQTT limit, truncated",
+            "wispmq-cli: {what} is {} bytes, exceeds the 65535-byte MQTT limit, truncated",
             v.len()
         );
         return &v[..u16::MAX as usize];
@@ -104,7 +104,7 @@ impl Writer {
         let mut end = v.len().min(u16::MAX as usize);
         if end < v.len() {
             eprintln!(
-                "pulsemq-cli: string is {} bytes, exceeds the 65535-byte MQTT limit, truncated",
+                "wispmq-cli: string is {} bytes, exceeds the 65535-byte MQTT limit, truncated",
                 v.len()
             );
             // Do not split a multi-byte character; back off to a boundary.

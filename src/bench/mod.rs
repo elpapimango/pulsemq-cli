@@ -1,4 +1,4 @@
-//! Broker performance testing: `pulsemq-cli bench`.
+//! Broker performance testing: `wispmq-cli bench`.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -323,20 +323,20 @@ mod tests {
 
     #[test]
     fn count_defaults_when_neither_stop_condition_is_given() {
-        let config = Config::from_args(&args_from(&["pulsemq-cli", "bench"])).unwrap();
+        let config = Config::from_args(&args_from(&["wispmq-cli", "bench"])).unwrap();
         assert_eq!(config.stop, Stop::Count(10_000));
     }
 
     #[test]
     fn count_wins_over_duration_but_duration_still_bounds_the_run() {
-        let args = args_from(&["pulsemq-cli", "bench", "--count", "50", "--duration", "30"]);
+        let args = args_from(&["wispmq-cli", "bench", "--count", "50", "--duration", "30"]);
         let config = Config::from_args(&args).unwrap();
         assert_eq!(config.stop, Stop::CountWithin(50, Duration::from_secs(30)));
     }
 
     #[test]
     fn duration_alone_is_a_timed_run() {
-        let args = args_from(&["pulsemq-cli", "bench", "--duration", "5"]);
+        let args = args_from(&["wispmq-cli", "bench", "--duration", "5"]);
         let config = Config::from_args(&args).unwrap();
         assert_eq!(config.stop, Stop::Duration(Duration::from_secs(5)));
     }
@@ -346,7 +346,7 @@ mod tests {
         // `measures_end_to_end` also requires a subscriber to observe the
         // header, so both runs ask for one.
         let args = args_from(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "bench",
             "--subscribers",
             "1",
@@ -357,7 +357,7 @@ mod tests {
         assert!(!config.measures_end_to_end());
 
         let args = args_from(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "bench",
             "--subscribers",
             "1",
@@ -370,25 +370,18 @@ mod tests {
 
     #[test]
     fn the_offered_rate_is_split_across_publishers() {
-        let args = args_from(&[
-            "pulsemq-cli",
-            "bench",
-            "--publishers",
-            "4",
-            "--rate",
-            "1000",
-        ]);
+        let args = args_from(&["wispmq-cli", "bench", "--publishers", "4", "--rate", "1000"]);
         let config = Config::from_args(&args).unwrap();
         assert_eq!(config.per_publisher_rate(), Some(250.0));
 
-        let args = args_from(&["pulsemq-cli", "bench", "--publishers", "4"]);
+        let args = args_from(&["wispmq-cli", "bench", "--publishers", "4"]);
         let config = Config::from_args(&args).unwrap();
         assert_eq!(config.per_publisher_rate(), None);
     }
 
     #[test]
     fn topics_follow_the_prefix() {
-        let args = args_from(&["pulsemq-cli", "bench", "--topic-prefix", "load"]);
+        let args = args_from(&["wispmq-cli", "bench", "--topic-prefix", "load"]);
         let config = Config::from_args(&args).unwrap();
         assert_eq!(config.topic_for(3), "load/3");
         assert_eq!(config.subscribe_filter(), "load/#");
@@ -396,7 +389,7 @@ mod tests {
 
     #[test]
     fn zero_publishers_is_rejected() {
-        let args = args_from(&["pulsemq-cli", "bench", "--publishers", "0"]);
+        let args = args_from(&["wispmq-cli", "bench", "--publishers", "0"]);
         assert!(Config::from_args(&args).is_err());
     }
 
@@ -411,7 +404,7 @@ mod tests {
 
     #[test]
     fn a_count_run_splits_the_quota_and_hands_the_remainder_to_the_first() {
-        let args = args_from(&["pulsemq-cli", "bench", "--publishers", "3", "--count", "10"]);
+        let args = args_from(&["wispmq-cli", "bench", "--publishers", "3", "--count", "10"]);
         let config = Config::from_args(&args).unwrap();
         assert_eq!(config.quota_for(0), Some(4));
         assert_eq!(config.quota_for(1), Some(3));
@@ -421,7 +414,7 @@ mod tests {
 
     #[test]
     fn a_timed_run_has_no_quota_but_has_a_deadline() {
-        let args = args_from(&["pulsemq-cli", "bench", "--duration", "7"]);
+        let args = args_from(&["wispmq-cli", "bench", "--duration", "7"]);
         let config = Config::from_args(&args).unwrap();
         assert_eq!(config.quota_for(0), None);
         assert_eq!(config.deadline(), Some(Duration::from_secs(7)));
@@ -429,7 +422,7 @@ mod tests {
 
     #[test]
     fn qos_2_is_accepted() {
-        let args = args_from(&["pulsemq-cli", "bench", "--qos", "2"]);
+        let args = args_from(&["wispmq-cli", "bench", "--qos", "2"]);
         assert_eq!(Config::from_args(&args).unwrap().qos, QoS::ExactlyOnce);
     }
 
@@ -438,13 +431,13 @@ mod tests {
     /// reaches it, so it is validated here.
     #[test]
     fn a_pathologically_small_rate_is_rejected() {
-        let args = args_from(&["pulsemq-cli", "bench", "--rate", "1e-300"]);
+        let args = args_from(&["wispmq-cli", "bench", "--rate", "1e-300"]);
         assert!(Config::from_args(&args).is_err());
     }
 
     #[test]
     fn an_ordinary_rate_resolves() {
-        let args = args_from(&["pulsemq-cli", "bench", "--rate", "500"]);
+        let args = args_from(&["wispmq-cli", "bench", "--rate", "500"]);
         let config = Config::from_args(&args).unwrap();
         assert_eq!(config.rate, Some(500.0));
     }
@@ -474,14 +467,14 @@ mod tests {
     /// that broker binary built and a free port.
     ///
     /// Run with:
-    ///   cargo build --manifest-path ../pulsemq/Cargo.toml --bin pulsemq
+    ///   cargo build --manifest-path ../wispmq/Cargo.toml --bin wispmq
     ///   cargo test bench::tests::a_small_run_publishes_and_receives -- --ignored
     #[tokio::test(flavor = "multi_thread")]
     #[ignore]
     async fn a_small_run_publishes_and_receives() {
         use std::process::{Command as ProcessCommand, Stdio};
 
-        let broker_bin = "../pulsemq/target/debug/pulsemq";
+        let broker_bin = "../wispmq/target/debug/wispmq";
         let mut broker = ProcessCommand::new(broker_bin)
             .args([
                 "--listen-addr",
@@ -489,7 +482,7 @@ mod tests {
                 "--admin-addr",
                 "127.0.0.1:19041",
                 "--db-path",
-                "/tmp/pulsemq-bench-test.db",
+                "/tmp/wispmq-bench-test.db",
                 "--sys-interval",
                 "0",
             ])
@@ -500,7 +493,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         let args = args_from(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "bench",
             "-b",
             "127.0.0.1",
@@ -525,11 +518,11 @@ mod tests {
 
     #[test]
     fn a_rate_safe_alone_is_rejected_once_split_across_publishers() {
-        let args = args_from(&["pulsemq-cli", "bench", "--rate", "2e-19"]);
+        let args = args_from(&["wispmq-cli", "bench", "--rate", "2e-19"]);
         assert!(Config::from_args(&args).is_ok());
 
         let args = args_from(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "bench",
             "--rate",
             "2e-19",

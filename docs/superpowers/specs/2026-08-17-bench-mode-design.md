@@ -1,4 +1,4 @@
-# pulsemq-cli `bench` — broker performance testing mode
+# wispmq-cli `bench` — broker performance testing mode
 
 Date: 2026-08-17
 Status: approved, not implemented
@@ -24,7 +24,7 @@ messages, and `--json` output from two runs can be diffed.
 ## Command surface
 
 ```
-pulsemq-cli bench [connection options]
+wispmq-cli bench [connection options]
   --publishers N        default 1
   --subscribers N       default 0
   --topic-prefix S      default "bench"
@@ -178,7 +178,7 @@ Unit tests cover the parts that are pure:
   by Receive Maximum, payload under 16 bytes disabling end-to-end latency
 
 The full path needs a live broker. That belongs with `TODO.md` item 8
-(end-to-end tests against `../pulsemq`) rather than being faked in a unit test;
+(end-to-end tests against `../wispmq`) rather than being faked in a unit test;
 until then it is verified by hand the way the earlier smoke tests were.
 
 ## Out of scope

@@ -41,7 +41,7 @@ fn build_config(args: &ConnectionArgs) -> Result<ClientConfig> {
         // warning: disabling certificate verification is the dangerous case,
         // and a warning that can be trained away by seeing it once defeats
         // the point.
-        eprintln!("pulsemq-cli: warning: --insecure disables TLS server certificate verification");
+        eprintln!("wispmq-cli: warning: --insecure disables TLS server certificate verification");
         builder
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(NoServerVerification))
@@ -80,7 +80,7 @@ fn load_root_store(cafile: Option<&Path>) -> Result<RootCertStore> {
         None => {
             let result = rustls_native_certs::load_native_certs();
             for err in &result.errors {
-                eprintln!("pulsemq-cli: warning: reading a native root certificate: {err}");
+                eprintln!("wispmq-cli: warning: reading a native root certificate: {err}");
             }
             let (added, _ignored) = store.add_parsable_certificates(result.certs);
             if added == 0 {
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn a_missing_cafile_is_a_usage_error_not_a_panic() {
-        let err = load_certs(Path::new("/nonexistent/pulsemq-cli-no-such-cafile.pem"))
+        let err = load_certs(Path::new("/nonexistent/wispmq-cli-no-such-cafile.pem"))
             .expect_err("missing file");
         assert!(matches!(err, Error::Usage(_)));
     }
@@ -189,7 +189,7 @@ mod tests {
     #[test]
     fn an_empty_cafile_is_a_usage_error() {
         let path =
-            std::env::temp_dir().join(format!("pulsemq-cli-empty-cafile-{}", std::process::id()));
+            std::env::temp_dir().join(format!("wispmq-cli-empty-cafile-{}", std::process::id()));
         std::fs::write(&path, b"not a certificate\n").unwrap();
         let err = load_certs(&path).expect_err("no PEM certs in file");
         assert!(matches!(err, Error::Usage(_)));

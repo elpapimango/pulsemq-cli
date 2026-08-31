@@ -2,7 +2,7 @@
 //!
 //! Dials the broker, performs the CONNECT/CONNACK handshake for the negotiated
 //! protocol version, and exposes `send`/`recv` plus packet-identifier
-//! allocation. Everything version-specific lives here or in the `pulsemq`
+//! allocation. Everything version-specific lives here or in the `wispmq`
 //! codec, so the subcommands hold only the part that differs between them.
 
 use std::time::Duration;
@@ -101,7 +101,7 @@ pub fn generated_client_id() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
         .unwrap_or(0);
-    format!("pulsemq-cli-{pid}-{nanos:x}")
+    format!("wispmq-cli-{pid}-{nanos:x}")
 }
 
 pub struct Client {
@@ -254,7 +254,7 @@ mod tests {
             connect.properties.maximum_packet_size
         });
 
-        let args = connection_args(["pulsemq-cli", "pub", "-t", "x"].as_slice());
+        let args = connection_args(["wispmq-cli", "pub", "-t", "x"].as_slice());
         handshake(&mut client_side, &args, "advertiser")
             .await
             .expect("handshake succeeds");
@@ -288,7 +288,7 @@ mod tests {
             connect.will.is_some()
         });
 
-        let args = connection_args(["pulsemq-cli", "pub", "-t", "x"].as_slice());
+        let args = connection_args(["wispmq-cli", "pub", "-t", "x"].as_slice());
         handshake(&mut client_side, &args, "no-will")
             .await
             .expect("handshake succeeds");
@@ -322,7 +322,7 @@ mod tests {
 
         let args = connection_args(
             [
-                "pulsemq-cli",
+                "wispmq-cli",
                 "pub",
                 "-t",
                 "x",
@@ -373,7 +373,7 @@ mod tests {
                 .expect("CONNACK writes");
         });
 
-        let args = connection_args(["pulsemq-cli", "pub", "-t", "x"].as_slice());
+        let args = connection_args(["wispmq-cli", "pub", "-t", "x"].as_slice());
         let negotiated = handshake(&mut client_side, &args, "probe")
             .await
             .expect("handshake succeeds");
@@ -396,7 +396,7 @@ mod tests {
                 .expect("CONNACK writes");
         });
 
-        let args = connection_args(["pulsemq-cli", "pub", "-t", "x"].as_slice());
+        let args = connection_args(["wispmq-cli", "pub", "-t", "x"].as_slice());
         let err = handshake(&mut client_side, &args, "probe")
             .await
             .expect_err("a refused connection is an error");
@@ -418,7 +418,7 @@ mod tests {
     async fn connect_validates_the_password_file_before_dialling() {
         let args = connection_args(
             [
-                "pulsemq-cli",
+                "wispmq-cli",
                 "pub",
                 "-t",
                 "x",
@@ -427,7 +427,7 @@ mod tests {
                 "-p",
                 "1",
                 "--password-file",
-                "/nonexistent/pulsemq-cli-password-file-that-does-not-exist",
+                "/nonexistent/wispmq-cli-password-file-that-does-not-exist",
             ]
             .as_slice(),
         );

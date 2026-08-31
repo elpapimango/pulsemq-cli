@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a `bench` subcommand to `pulsemq-cli` that drives configurable publisher and subscriber load against an MQTT broker and reports throughput plus exact latency percentiles.
+**Goal:** Add a `bench` subcommand to `wispmq-cli` that drives configurable publisher and subscriber load against an MQTT broker and reports throughput plus exact latency percentiles.
 
 **Architecture:** One tokio task per connection. Publishers pace sends against absolute deadlines and hold an in-flight window bounded by the broker's Receive Maximum; subscribers time messages end to end using a 16-byte header written into each payload. Counters are atomics shared across tasks; latency samples stay task-local and merge when the tasks join, so nothing crosses a channel on the measurement path.
 
-**Tech Stack:** Rust 2021, tokio (multi-threaded runtime for `bench`, current-thread for the other subcommands), clap derive, serde_json for `--json`, and the `pulsemq` crate as the MQTT codec.
+**Tech Stack:** Rust 2021, tokio (multi-threaded runtime for `bench`, current-thread for the other subcommands), clap derive, serde_json for `--json`, and the `wispmq` crate as the MQTT codec.
 
 **Spec:** `docs/superpowers/specs/2026-08-17-bench-mode-design.md`
 
@@ -17,7 +17,7 @@
   `cargo build`, `cargo test`, `cargo fmt --all -- --check`,
   `cargo clippy --all-targets --all-features -- -D warnings`.
 - The wire format is never reimplemented here. All packet types, properties,
-  framing and enums come from the `pulsemq` path dependency at `../pulsemq`.
+  framing and enums come from the `wispmq` path dependency at `../wispmq`.
 - No mention of any other MQTT client project in code, comments, or docs. This
   tool is written from scratch against the OASIS specs.
 - Dependency surface stays small and justified. The only new third-party
@@ -143,7 +143,7 @@ mod tests {
 Create `src/bench/mod.rs`:
 
 ```rust
-//! Broker performance testing: `pulsemq-cli bench`.
+//! Broker performance testing: `wispmq-cli bench`.
 
 pub mod stats;
 ```
@@ -574,7 +574,7 @@ Append to the existing `mod tests` in `src/cli.rs`:
 ```rust
     #[test]
     fn bench_defaults_match_the_documented_ones() {
-        let cli = Cli::parse_from(["pulsemq-cli", "bench"]);
+        let cli = Cli::parse_from(["wispmq-cli", "bench"]);
         let Command::Bench(args) = cli.command else {
             panic!("expected the bench subcommand");
         };
@@ -608,13 +608,13 @@ mod tests {
 
     #[test]
     fn count_defaults_when_neither_stop_condition_is_given() {
-        let config = Config::from_args(&args_from(&["pulsemq-cli", "bench"])).unwrap();
+        let config = Config::from_args(&args_from(&["wispmq-cli", "bench"])).unwrap();
         assert_eq!(config.stop, Stop::Count(10_000));
     }
 
     #[test]
     fn count_wins_over_duration_but_duration_still_bounds_the_run() {
-        let args = args_from(&["pulsemq-cli", "bench", "--count", "50", "--duration", "30"]);
+        let args = args_from(&["wispmq-cli", "bench", "--count", "50", "--duration", "30"]);
         let config = Config::from_args(&args).unwrap();
         assert_eq!(
             config.stop,
@@ -624,36 +624,36 @@ mod tests {
 
     #[test]
     fn duration_alone_is_a_timed_run() {
-        let args = args_from(&["pulsemq-cli", "bench", "--duration", "5"]);
+        let args = args_from(&["wispmq-cli", "bench", "--duration", "5"]);
         let config = Config::from_args(&args).unwrap();
         assert_eq!(config.stop, Stop::Duration(Duration::from_secs(5)));
     }
 
     #[test]
     fn a_payload_below_the_header_length_disables_end_to_end_latency() {
-        let args = args_from(&["pulsemq-cli", "bench", "--payload-size", "8"]);
+        let args = args_from(&["wispmq-cli", "bench", "--payload-size", "8"]);
         let config = Config::from_args(&args).unwrap();
         assert!(!config.measures_end_to_end());
 
-        let args = args_from(&["pulsemq-cli", "bench", "--payload-size", "16"]);
+        let args = args_from(&["wispmq-cli", "bench", "--payload-size", "16"]);
         let config = Config::from_args(&args).unwrap();
         assert!(config.measures_end_to_end());
     }
 
     #[test]
     fn the_offered_rate_is_split_across_publishers() {
-        let args = args_from(&["pulsemq-cli", "bench", "--publishers", "4", "--rate", "1000"]);
+        let args = args_from(&["wispmq-cli", "bench", "--publishers", "4", "--rate", "1000"]);
         let config = Config::from_args(&args).unwrap();
         assert_eq!(config.per_publisher_rate(), Some(250.0));
 
-        let args = args_from(&["pulsemq-cli", "bench", "--publishers", "4"]);
+        let args = args_from(&["wispmq-cli", "bench", "--publishers", "4"]);
         let config = Config::from_args(&args).unwrap();
         assert_eq!(config.per_publisher_rate(), None);
     }
 
     #[test]
     fn topics_follow_the_prefix() {
-        let args = args_from(&["pulsemq-cli", "bench", "--topic-prefix", "load"]);
+        let args = args_from(&["wispmq-cli", "bench", "--topic-prefix", "load"]);
         let config = Config::from_args(&args).unwrap();
         assert_eq!(config.topic_for(3), "load/3");
         assert_eq!(config.subscribe_filter(), "load/#");
@@ -661,7 +661,7 @@ mod tests {
 
     #[test]
     fn zero_publishers_is_rejected() {
-        let args = args_from(&["pulsemq-cli", "bench", "--publishers", "0"]);
+        let args = args_from(&["wispmq-cli", "bench", "--publishers", "0"]);
         assert!(Config::from_args(&args).is_err());
     }
 
@@ -757,7 +757,7 @@ In `src/bench/mod.rs`, above the test module:
 ```rust
 use std::time::Duration;
 
-use pulsemq::types::QoS;
+use wispmq::types::QoS;
 
 use crate::cli::BenchArgs;
 use crate::error::{Error, Result};
@@ -877,7 +877,7 @@ Add tests for them now, in the same `mod tests`:
 ```rust
     #[test]
     fn a_count_run_splits_the_quota_and_hands_the_remainder_to_the_first() {
-        let args = args_from(&["pulsemq-cli", "bench", "--publishers", "3", "--count", "10"]);
+        let args = args_from(&["wispmq-cli", "bench", "--publishers", "3", "--count", "10"]);
         let config = Config::from_args(&args).unwrap();
         assert_eq!(config.quota_for(0), Some(4));
         assert_eq!(config.quota_for(1), Some(3));
@@ -887,7 +887,7 @@ Add tests for them now, in the same `mod tests`:
 
     #[test]
     fn a_timed_run_has_no_quota_but_has_a_deadline() {
-        let args = args_from(&["pulsemq-cli", "bench", "--duration", "7"]);
+        let args = args_from(&["wispmq-cli", "bench", "--duration", "7"]);
         let config = Config::from_args(&args).unwrap();
         assert_eq!(config.quota_for(0), None);
         assert_eq!(config.deadline(), Some(Duration::from_secs(7)));
@@ -898,7 +898,7 @@ Add tests for them now, in the same `mod tests`:
 temporary arm that fails loudly, replaced in Task 9:
 
 ```rust
-        Command::Bench(_) => Err(pulsemq_cli::error::Error::Usage(
+        Command::Bench(_) => Err(wispmq_cli::error::Error::Usage(
             "bench is not implemented yet".into(),
         )),
 ```
@@ -954,8 +954,8 @@ Add a test module at the end of `src/client.rs`:
 mod tests {
     use super::*;
     use clap::Parser;
-    use pulsemq::framing::{read_packet, write_packet, ReadOutcome};
-    use pulsemq::packet::Connack;
+    use wispmq::framing::{read_packet, write_packet, ReadOutcome};
+    use wispmq::packet::Connack;
     use tokio::io::duplex;
 
     fn connection_args(argv: &[&str]) -> ConnectionArgs {
@@ -993,7 +993,7 @@ mod tests {
                 .expect("CONNACK writes");
         });
 
-        let args = connection_args(["pulsemq-cli", "pub", "-t", "x"].as_slice());
+        let args = connection_args(["wispmq-cli", "pub", "-t", "x"].as_slice());
         let negotiated = handshake(&mut client_side, &args, "probe")
             .await
             .expect("handshake succeeds");
@@ -1016,7 +1016,7 @@ mod tests {
                 .expect("CONNACK writes");
         });
 
-        let args = connection_args(["pulsemq-cli", "pub", "-t", "x"].as_slice());
+        let args = connection_args(["wispmq-cli", "pub", "-t", "x"].as_slice());
         let err = handshake(&mut client_side, &args, "probe")
             .await
             .expect_err("a refused connection is an error");
@@ -1107,7 +1107,7 @@ where
             what: "connection".into(),
             code: ack.reason_code,
         }),
-        ReadOutcome::Packet(other, _) => Err(Error::Mqtt(pulsemq::error::protocol(format!(
+        ReadOutcome::Packet(other, _) => Err(Error::Mqtt(wispmq::error::protocol(format!(
             "expected CONNACK, got {}",
             other.name()
         )))),
@@ -1123,7 +1123,7 @@ pub fn generated_client_id() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
         .unwrap_or(0);
-    format!("pulsemq-cli-{pid}-{nanos:x}")
+    format!("wispmq-cli-{pid}-{nanos:x}")
 }
 ```
 
@@ -1176,8 +1176,8 @@ Then run the live check that `pub`/`sub` still work, exactly as `CLAUDE.md`
 documents:
 
 ```bash
-cargo build --manifest-path ../pulsemq/Cargo.toml --bin pulsemq
-../pulsemq/target/debug/pulsemq --listen-addr 127.0.0.1:18830 \
+cargo build --manifest-path ../wispmq/Cargo.toml --bin wispmq
+../wispmq/target/debug/wispmq --listen-addr 127.0.0.1:18830 \
     --admin-addr 127.0.0.1:19001 --db-path /tmp/smoke.db --sys-interval 0 &
 cargo run -- sub -b 127.0.0.1 -p 18830 -t 'test/#' -q 1 --show-topic -n 1 &
 sleep 1
@@ -1227,7 +1227,7 @@ EOF
 Add to `mod tests` in `src/bench/stats.rs`:
 
 ```rust
-    use pulsemq::types::ReasonCode;
+    use wispmq::types::ReasonCode;
     use std::time::Duration;
 
     fn totals() -> CounterTotals {
@@ -1361,7 +1361,7 @@ Add the dependency to `Cargo.toml`, under `[dependencies]`:
 
 ```toml
 # --json report output. Already present in the compiled tree through the
-# pulsemq dependency, so it adds no new build cost.
+# wispmq dependency, so it adds no new build cost.
 serde_json = "1"
 ```
 
@@ -1373,7 +1373,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use pulsemq::types::ReasonCode;
+use wispmq::types::ReasonCode;
 ```
 
 and, above the test module:
@@ -1688,9 +1688,9 @@ mod tests {
     use super::*;
     use crate::bench::stats::Counters;
     use clap::Parser;
-    use pulsemq::framing::{read_packet, write_packet, ReadOutcome};
-    use pulsemq::packet::{Connack, PubAck};
-    use pulsemq::types::{ProtocolVersion, ReasonCode};
+    use wispmq::framing::{read_packet, write_packet, ReadOutcome};
+    use wispmq::packet::{Connack, PubAck};
+    use wispmq::types::{ProtocolVersion, ReasonCode};
     use tokio::net::TcpListener;
 
     /// A broker stub: accepts one connection, CONNACKs, then PUBACKs every
@@ -1741,7 +1741,7 @@ mod tests {
     fn connection_args(port: u16) -> ConnectionArgs {
         let port = port.to_string();
         let cli = crate::cli::Cli::parse_from([
-            "pulsemq-cli",
+            "wispmq-cli",
             "bench",
             "-b",
             "127.0.0.1",
@@ -1761,7 +1761,7 @@ mod tests {
         let broker = tokio::spawn(ack_everything(listener));
 
         let config = Arc::new(config_for(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "bench",
             "--count",
             "10",
@@ -1798,7 +1798,7 @@ mod tests {
 
         // A duration run has no quota: only the stop signal ends it.
         let config = Arc::new(config_for(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "bench",
             "--duration",
             "600",
@@ -1840,7 +1840,7 @@ mod tests {
         let broker = tokio::spawn(ack_everything(listener));
 
         let config = Arc::new(config_for(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "bench",
             "--count",
             "5",
@@ -1893,9 +1893,9 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use pulsemq::framing::{read_packet, write_packet, ReadOutcome};
-use pulsemq::packet::{Packet, PubAck, Publish};
-use pulsemq::types::{QoS, ReasonCode};
+use wispmq::framing::{read_packet, write_packet, ReadOutcome};
+use wispmq::packet::{Packet, PubAck, Publish};
+use wispmq::types::{QoS, ReasonCode};
 use tokio::net::TcpStream;
 use tokio::sync::{watch, Mutex, Semaphore};
 
@@ -2082,7 +2082,7 @@ pub async fn run(
     }
     let _ = write_packet(
         &mut writer,
-        &Packet::Disconnect(pulsemq::packet::Disconnect::new(ReasonCode::Success)),
+        &Packet::Disconnect(wispmq::packet::Disconnect::new(ReasonCode::Success)),
         version,
     )
     .await;
@@ -2163,9 +2163,9 @@ mod tests {
     use crate::bench::payload::{self, Header};
     use crate::bench::stats::Counters;
     use clap::Parser;
-    use pulsemq::framing::{read_packet, write_packet, ReadOutcome};
-    use pulsemq::packet::{Connack, Publish, SubAck};
-    use pulsemq::types::{ProtocolVersion, ReasonCode};
+    use wispmq::framing::{read_packet, write_packet, ReadOutcome};
+    use wispmq::packet::{Connack, Publish, SubAck};
+    use wispmq::types::{ProtocolVersion, ReasonCode};
     use tokio::net::TcpListener;
 
     /// A broker stub that accepts the subscription and then delivers
@@ -2213,7 +2213,7 @@ mod tests {
             );
             let publish = Publish {
                 dup: false,
-                qos: pulsemq::types::QoS::AtMostOnce,
+                qos: wispmq::types::QoS::AtMostOnce,
                 retain: false,
                 topic: "bench/0".into(),
                 packet_id: None,
@@ -2237,7 +2237,7 @@ mod tests {
     fn connection_args(port: u16) -> ConnectionArgs {
         let port = port.to_string();
         let cli =
-            crate::cli::Cli::parse_from(["pulsemq-cli", "bench", "-b", "127.0.0.1", "-p", &port]);
+            crate::cli::Cli::parse_from(["wispmq-cli", "bench", "-b", "127.0.0.1", "-p", &port]);
         let crate::cli::Command::Bench(args) = cli.command else {
             panic!("expected the bench subcommand");
         };
@@ -2251,7 +2251,7 @@ mod tests {
         let baseline = Instant::now();
         let broker = tokio::spawn(deliver(listener, 3, Duration::from_millis(50), baseline));
 
-        let config = Arc::new(config_for(&["pulsemq-cli", "bench", "--subscribers", "1"]));
+        let config = Arc::new(config_for(&["wispmq-cli", "bench", "--subscribers", "1"]));
         let counters = Arc::new(Counters::default());
         let (tx, stop) = watch::channel(false);
 
@@ -2316,7 +2316,7 @@ mod tests {
             .expect("SUBACK");
             let publish = Publish {
                 dup: false,
-                qos: pulsemq::types::QoS::AtMostOnce,
+                qos: wispmq::types::QoS::AtMostOnce,
                 retain: false,
                 topic: "bench/0".into(),
                 packet_id: None,
@@ -2328,7 +2328,7 @@ mod tests {
                 .expect("PUBLISH");
         });
 
-        let config = Arc::new(config_for(&["pulsemq-cli", "bench", "--subscribers", "1"]));
+        let config = Arc::new(config_for(&["wispmq-cli", "bench", "--subscribers", "1"]));
         let counters = Arc::new(Counters::default());
         let (tx, stop) = watch::channel(false);
         let handle = tokio::spawn(run(
@@ -2371,9 +2371,9 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use pulsemq::framing::{read_packet, write_packet, ReadOutcome};
-use pulsemq::packet::{Packet, PubAck, Subscribe, TopicFilter};
-use pulsemq::types::{QoS, ReasonCode, RetainHandling};
+use wispmq::framing::{read_packet, write_packet, ReadOutcome};
+use wispmq::packet::{Packet, PubAck, Subscribe, TopicFilter};
+use wispmq::types::{QoS, ReasonCode, RetainHandling};
 use tokio::net::TcpStream;
 use tokio::sync::watch;
 
@@ -2552,14 +2552,14 @@ Add to `mod tests` in `src/bench/mod.rs`:
     /// that broker binary built and a free port.
     ///
     /// Run with:
-    ///   cargo build --manifest-path ../pulsemq/Cargo.toml --bin pulsemq
+    ///   cargo build --manifest-path ../wispmq/Cargo.toml --bin wispmq
     ///   cargo test bench::tests::a_small_run_publishes_and_receives -- --ignored
     #[tokio::test(flavor = "multi_thread")]
     #[ignore]
     async fn a_small_run_publishes_and_receives() {
         use std::process::{Command as ProcessCommand, Stdio};
 
-        let broker_bin = "../pulsemq/target/debug/pulsemq";
+        let broker_bin = "../wispmq/target/debug/wispmq";
         let mut broker = ProcessCommand::new(broker_bin)
             .args([
                 "--listen-addr",
@@ -2567,7 +2567,7 @@ Add to `mod tests` in `src/bench/mod.rs`:
                 "--admin-addr",
                 "127.0.0.1:19041",
                 "--db-path",
-                "/tmp/pulsemq-bench-test.db",
+                "/tmp/wispmq-bench-test.db",
                 "--sys-interval",
                 "0",
             ])
@@ -2578,7 +2578,7 @@ Add to `mod tests` in `src/bench/mod.rs`:
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         let args = args_from(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "bench",
             "-b",
             "127.0.0.1",
@@ -2778,9 +2778,9 @@ Rewrite `src/main.rs` so the runtime matches the workload:
 use std::process::ExitCode;
 
 use clap::Parser;
-use pulsemq_cli::cli::{Cli, Command};
-use pulsemq_cli::error::Result;
-use pulsemq_cli::{bench, publish, request, subscribe};
+use wispmq_cli::cli::{Cli, Command};
+use wispmq_cli::error::Result;
+use wispmq_cli::{bench, publish, request, subscribe};
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -2798,7 +2798,7 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("pulsemq-cli: {e}");
+            eprintln!("wispmq-cli: {e}");
             ExitCode::FAILURE
         }
     }
@@ -2833,8 +2833,8 @@ Expected: PASS for everything not marked `#[ignore]`.
 Then the live run, which is the real check:
 
 ```bash
-cargo build --manifest-path ../pulsemq/Cargo.toml --bin pulsemq
-../pulsemq/target/debug/pulsemq --listen-addr 127.0.0.1:18830 \
+cargo build --manifest-path ../wispmq/Cargo.toml --bin wispmq
+../wispmq/target/debug/wispmq --listen-addr 127.0.0.1:18830 \
     --admin-addr 127.0.0.1:19001 --db-path /tmp/bench.db --sys-interval 0 &
 cargo run --release -- bench -b 127.0.0.1 -p 18830 \
     --publishers 4 --subscribers 2 --count 20000 --qos 1 --payload-size 128
@@ -2879,10 +2879,10 @@ In the "Use" section, after the `request` example, add:
 ````markdown
 ```bash
 # measure a broker: 4 publishers, 2 subscribers, 20k messages at QoS 1
-pulsemq-cli bench --publishers 4 --subscribers 2 --count 20000 --qos 1
+wispmq-cli bench --publishers 4 --subscribers 2 --count 20000 --qos 1
 
 # hold 500 messages/second for 30 seconds and emit a machine-readable report
-pulsemq-cli bench --duration 30 --rate 500 --subscribers 1 --json
+wispmq-cli bench --duration 30 --rate 500 --subscribers 1 --json
 ```
 ````
 

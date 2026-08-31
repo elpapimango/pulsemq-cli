@@ -1,4 +1,4 @@
-//! `pulsemq-cli request` — publish a request, wait for the reply.
+//! `wispmq-cli request` — publish a request, wait for the reply.
 //!
 //! The subscribe must precede the publish, or a fast responder can answer
 //! before the subscription exists and the reply is lost.

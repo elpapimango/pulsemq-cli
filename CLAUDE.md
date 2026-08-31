@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`pulsemq-cli` is **one self-contained command-line MQTT client binary** with
+`wispmq-cli` is **one self-contained command-line MQTT client binary** with
 four subcommands:
 
 - `pub` — publish a message, MQTT v5.0 / v3.1.1 / v3.1
@@ -25,15 +25,15 @@ One binary, not four. The option surface is `clap` derive: long names that say
 what they do, short letters only for what is typed often (`-b`, `-p`, `-t`,
 `-m`, `-q`, `-r`, `-i`, `-u`, `-k`, `-n`), and clap keeps its own `-h` and `-V`.
 
-**This crate stands alone.** It has no dependency on the PulseMQ broker — not a
+**This crate stands alone.** It has no dependency on the WispMQ broker — not a
 path dependency, not a git one. `cargo build` in a fresh clone works with
 nothing checked out beside it. The wire format lives in-tree under `src/mqtt`.
 
-`pulsemq` is a separate broker in Rust (https://github.com/elpapimango/pulsemq),
+`wispmq` is a separate broker in Rust (https://github.com/elpapimango/wispmq),
 useful as a local server to test against and nothing more. Do not reintroduce a
-dependency on it, and do not reach into `../pulsemq` for source: if the client
+dependency on it, and do not reach into `../wispmq` for source: if the client
 needs something the codec does not have, add it to `src/mqtt`. Nothing here
-should require a PulseMQ-specific server — against any spec-conformant broker
+should require a WispMQ-specific server — against any spec-conformant broker
 the client must still work.
 
 This is a client — it speaks MQTT over the wire, it does not link a broker or
@@ -71,20 +71,20 @@ ever comes back, it fails there rather than in someone's fresh clone), a
 job that exercises `cli.rs`'s `#[cfg(not(unix))]` branch.
 
 `tests/e2e.rs` runs the publish/subscribe and request/reply round trips
-against a real broker — `../pulsemq`, if a sibling checkout exists, built and
+against a real broker — `../wispmq`, if a sibling checkout exists, built and
 spawned on a scratch port at test *run* time, not a build step. No sibling
 checkout: both tests print why and return immediately, so `cargo test` in a
 fresh clone stays green. To do the same thing by hand:
 
 ```bash
-cargo build --manifest-path ../pulsemq/Cargo.toml --bin pulsemq
-../pulsemq/target/debug/pulsemq --listen-addr 127.0.0.1:18830 \
+cargo build --manifest-path ../wispmq/Cargo.toml --bin wispmq
+../wispmq/target/debug/wispmq --listen-addr 127.0.0.1:18830 \
     --admin-addr 127.0.0.1:19001 --db-path /tmp/smoke.db --sys-interval 0 &
 cargo run -- sub -b 127.0.0.1 -p 18830 -t 'test/#' -q 1 --show-topic -n 1 &
 cargo run -- pub -b 127.0.0.1 -p 18830 -t test/a -m hello -q 1
 ```
 
-Nothing in `cargo build`, `fmt` or `clippy` reads `../pulsemq`; `cargo test`
+Nothing in `cargo build`, `fmt` or `clippy` reads `../wispmq`; `cargo test`
 does, via `tests/e2e.rs`, but only at run time and only when the checkout is
 there to find.
 
@@ -132,7 +132,7 @@ tests/e2e.rs        publish/subscribe and request/reply against a real
 
 `src/mqtt` is the layering boundary: it may not know anything about `cli`,
 `client` or the subcommands, and everything above it goes through it rather
-than touching bytes. It shares a common ancestor with the PulseMQ broker's
+than touching bytes. It shares a common ancestor with the WispMQ broker's
 codec, so a fix here is often worth carrying to that repo by hand — but the two
 have separate release cycles now and are free to diverge. Do not re-couple them
 to keep them in sync.

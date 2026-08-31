@@ -1,15 +1,15 @@
 [package]
-name = "pulsemq-cli"
+name = "wispmq-cli"
 version = "0.9.0"
 edition = "2021"
-description = "pulsemq-cli — a command-line MQTT v5.0 / 3.1.1 / 3.1 client: publish, subscribe, request/response"
+description = "wispmq-cli — a command-line MQTT v5.0 / 3.1.1 / 3.1 client: publish, subscribe, request/response"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/elpapimango/pulsemq-cli"
+repository = "https://github.com/elpapimango/wispmq-cli"
 keywords = ["mqtt", "cli", "client", "iot", "pubsub"]
 categories = ["command-line-utilities", "network-programming"]
 
 [[bin]]
-name = "pulsemq-cli"
+name = "wispmq-cli"
 path = "src/main.rs"
 
 [dependencies]

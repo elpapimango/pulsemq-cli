@@ -1,6 +1,6 @@
 //! End-to-end tests against a real broker.
 //!
-//! Not a build dependency: `../pulsemq`, if a sibling checkout exists, is
+//! Not a build dependency: `../wispmq`, if a sibling checkout exists, is
 //! discovered and built here, at test run time, via a `Command` — nothing
 //! in `cargo build`, `cargo test` (without this file), `fmt` or `clippy`
 //! reads it. Every test checks the fixture is available before doing
@@ -16,11 +16,11 @@ use std::time::Duration;
 use clap::Parser;
 use tokio::net::TcpStream;
 
-use pulsemq_cli::cli::{Cli, Command as Subcommand, ConnectionArgs, PubArgs, RequestArgs, SubArgs};
-use pulsemq_cli::client::Client;
-use pulsemq_cli::mqtt::packet::Packet;
-use pulsemq_cli::mqtt::types::QoS;
-use pulsemq_cli::{publish, request, subscribe};
+use wispmq_cli::cli::{Cli, Command as Subcommand, ConnectionArgs, PubArgs, RequestArgs, SubArgs};
+use wispmq_cli::client::Client;
+use wispmq_cli::mqtt::packet::Packet;
+use wispmq_cli::mqtt::types::QoS;
+use wispmq_cli::{publish, request, subscribe};
 
 const READY_TIMEOUT: Duration = Duration::from_secs(10);
 const ROUND_TRIP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -29,14 +29,14 @@ const ROUND_TRIP_TIMEOUT: Duration = Duration::from_secs(10);
 /// problem, reused here rather than inventing a second fudge factor.
 const SUBSCRIBE_SETTLE: Duration = Duration::from_millis(300);
 
-/// `../pulsemq`, built once and cached for every test in this file. `None`
+/// `../wispmq`, built once and cached for every test in this file. `None`
 /// means "skip" — no sibling checkout, or it failed to build — logged once,
 /// not per test.
-fn pulsemq_binary() -> Option<&'static Path> {
+fn wispmq_binary() -> Option<&'static Path> {
     static BINARY: OnceLock<Option<PathBuf>> = OnceLock::new();
     BINARY
         .get_or_init(|| {
-            let manifest = Path::new("../pulsemq/Cargo.toml");
+            let manifest = Path::new("../wispmq/Cargo.toml");
             if !manifest.exists() {
                 eprintln!(
                     "e2e: skipping — no sibling checkout at {} (see CLAUDE.md's smoke test)",
@@ -50,12 +50,12 @@ fn pulsemq_binary() -> Option<&'static Path> {
                     "--manifest-path",
                     manifest.to_str().expect("utf8 path"),
                     "--bin",
-                    "pulsemq",
+                    "wispmq",
                 ])
                 .status();
             match status {
                 Ok(s) if s.success() => {
-                    let bin = Path::new("../pulsemq/target/debug/pulsemq");
+                    let bin = Path::new("../wispmq/target/debug/wispmq");
                     if bin.exists() {
                         Some(bin.to_path_buf())
                     } else {
@@ -67,11 +67,11 @@ fn pulsemq_binary() -> Option<&'static Path> {
                     }
                 }
                 Ok(s) => {
-                    eprintln!("e2e: skipping — building ../pulsemq exited with {s}");
+                    eprintln!("e2e: skipping — building ../wispmq exited with {s}");
                     None
                 }
                 Err(e) => {
-                    eprintln!("e2e: skipping — could not run cargo to build ../pulsemq: {e}");
+                    eprintln!("e2e: skipping — could not run cargo to build ../wispmq: {e}");
                     None
                 }
             }
@@ -87,9 +87,9 @@ struct Broker {
 
 impl Broker {
     /// Spawn a broker on a free port and wait for it to accept MQTT
-    /// connections. `None` when `../pulsemq` isn't available.
+    /// connections. `None` when `../wispmq` isn't available.
     async fn spawn() -> Option<Broker> {
-        let bin = pulsemq_binary()?;
+        let bin = wispmq_binary()?;
 
         // Reserve a port, then release it immediately before the broker
         // binds it — a small TOCTOU window, acceptable for a test fixture
@@ -101,7 +101,7 @@ impl Broker {
         drop(scratch);
 
         let db_path =
-            std::env::temp_dir().join(format!("pulsemq-cli-e2e-{}-{port}.db", std::process::id()));
+            std::env::temp_dir().join(format!("wispmq-cli-e2e-{}-{port}.db", std::process::id()));
         let _ = std::fs::remove_file(&db_path);
 
         let child = Command::new(bin)
@@ -120,7 +120,7 @@ impl Broker {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .expect("spawn pulsemq");
+            .expect("spawn wispmq");
 
         let mut broker = Broker { child, port };
         if !broker.wait_ready().await {
@@ -154,7 +154,7 @@ impl Drop for Broker {
 fn conn_args(port: u16) -> ConnectionArgs {
     let port = port.to_string();
     match Cli::parse_from([
-        "pulsemq-cli",
+        "wispmq-cli",
         "pub",
         "-t",
         "x",
@@ -173,7 +173,7 @@ fn conn_args(port: u16) -> ConnectionArgs {
 fn pub_args(port: u16, topic: &str, message: &str) -> PubArgs {
     let port = port.to_string();
     match Cli::parse_from([
-        "pulsemq-cli",
+        "wispmq-cli",
         "pub",
         "-b",
         "127.0.0.1",
@@ -197,7 +197,7 @@ fn sub_args(port: u16, topic: &str, count: u64) -> SubArgs {
     let port = port.to_string();
     let count = count.to_string();
     match Cli::parse_from([
-        "pulsemq-cli",
+        "wispmq-cli",
         "sub",
         "-b",
         "127.0.0.1",
@@ -220,7 +220,7 @@ fn sub_args(port: u16, topic: &str, count: u64) -> SubArgs {
 fn request_args(port: u16, topic: &str, reply_topic: &str, message: &str) -> RequestArgs {
     let port = port.to_string();
     match Cli::parse_from([
-        "pulsemq-cli",
+        "wispmq-cli",
         "request",
         "-b",
         "127.0.0.1",
@@ -299,7 +299,7 @@ async fn request_receives_a_responders_reply() {
                     subscribe::acknowledge(&mut client, &p)
                         .await
                         .expect("responder acks the request");
-                    let reply = pulsemq_cli::mqtt::packet::Publish {
+                    let reply = wispmq_cli::mqtt::packet::Publish {
                         dup: false,
                         qos: QoS::AtLeastOnce,
                         retain: false,

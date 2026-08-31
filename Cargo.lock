@@ -400,22 +400,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pulsemq-cli"
-version = "0.9.0"
-dependencies = [
- "clap",
- "futures-util",
- "rcgen",
- "rustls-native-certs",
- "rustls-pemfile",
- "rustls-pki-types",
- "serde_json",
- "tokio",
- "tokio-rustls",
- "tokio-tungstenite",
-]
-
-[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -922,6 +906,22 @@ name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
+
+[[package]]
+name = "wispmq-cli"
+version = "0.9.0"
+dependencies = [
+ "clap",
+ "futures-util",
+ "rcgen",
+ "rustls-native-certs",
+ "rustls-pemfile",
+ "rustls-pki-types",
+ "serde_json",
+ "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite",
+]
 
 [[package]]
 name = "yasna"

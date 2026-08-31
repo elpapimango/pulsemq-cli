@@ -204,10 +204,8 @@ mod tls_tests {
     fn write_temp(name: &str, contents: &str) -> std::path::PathBuf {
         static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "pulsemq-cli-test-{}-{n}-{name}",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("wispmq-cli-test-{}-{n}-{name}", std::process::id()));
         std::fs::write(&path, contents).expect("write temp file");
         path
     }
@@ -268,7 +266,7 @@ mod tls_tests {
         let (port, cert_path, server) = spawn_echo_server().await;
         let port_s = port.to_string();
         let args = conn_args(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "pub",
             "-t",
             "x",
@@ -302,7 +300,7 @@ mod tls_tests {
         let (port, cert_path, server) = spawn_echo_server().await;
         let port_s = port.to_string();
         let args = conn_args(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "pub",
             "-t",
             "x",
@@ -328,7 +326,7 @@ mod tls_tests {
         let (port, cert_path, server) = spawn_echo_server().await;
         let port_s = port.to_string();
         let args = conn_args(&[
-            "pulsemq-cli",
+            "wispmq-cli",
             "pub",
             "-t",
             "x",

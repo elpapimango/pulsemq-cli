@@ -11,11 +11,11 @@ line when they come up.
   acknowledgement and end-to-end, table or `--json` output. Design spec:
   `docs/superpowers/specs/2026-08-17-bench-mode-design.md`.
 - **Decoupling from the broker crate** — the MQTT wire format lives in
-  `src/mqtt`; the crate builds with no PulseMQ checkout beside it.
+  `src/mqtt`; the crate builds with no WispMQ checkout beside it.
 - **Security audit, first pass** — `--max-packet-size` (1 MiB default, also
   advertised as the v5 Maximum Packet Size) closes a 256 MB allocation a broker
   could demand; control characters are escaped when stdout is a terminal, while
-  pipes and redirects stay byte-exact; `PULSEMQ_PASSWORD` joins the credential
+  pipes and redirects stay byte-exact; `WISPMQ_PASSWORD` joins the credential
   sources and a world-readable password file warns. The decoder was audited and
   found clean: every `Reader` access is bounds-checked and no `unwrap`, index
   or unchecked cast sits on the broker-input path.
@@ -93,7 +93,7 @@ line when they come up.
 - **Stale comment in `src/mqtt/packet/publish.rs`** — the doc comment on
   `Publish::payload` described broker-only behaviour that never existed in
   this crate (routing fan-out, a `tests/bench_routing.rs` that only exists
-  in the PulseMQ broker's copy of this codec), leftover from the shared
+  in the WispMQ broker's copy of this codec), leftover from the shared
   ancestor. On closer look, `Arc<[u8]>`'s benefit here isn't the
   retransmission path either — nothing in this crate actually clones a
   `Publish` today. Replaced with the honest reason: it keeps `Publish`
@@ -113,7 +113,7 @@ line when they come up.
   `tls`/`websocket` feature code is actually compiled and tested in CI, not
   only locally), and a `windows-latest` job (fmt/clippy/test, default
   features) so `cli.rs`'s `#[cfg(not(unix))]` branch runs somewhere.
-- **End-to-end tests** — `tests/e2e.rs`. `../pulsemq`, when a sibling
+- **End-to-end tests** — `tests/e2e.rs`. `../wispmq`, when a sibling
   checkout exists, is built (`cargo build --manifest-path`) and spawned on a
   scratch port at test *run* time by a `Command` inside the test — not a
   build step, so it stays exactly the discovered-not-depended-on fixture
