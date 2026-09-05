@@ -1,0 +1,90 @@
+name: Release binaries
+
+# Builds cross-platform release binaries and attaches them to the GitHub
+# Release for a `vX.Y.Z` tag (mirroring wispmq's own tag -> release wiring in
+# its docker.yml). `workflow_dispatch` lets an existing tag be (re)built
+# without pushing a new one — e.g. to backfill binaries onto a release that
+# was cut before this workflow existed.
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ensure-release:
+    name: ensure release exists
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create the release if it isn't there yet
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: gh release create "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes || true
+
+  build:
+    name: ${{ matrix.target }}
+    needs: ensure-release
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+
+      # --all-features: a released binary should support every transport
+      # (tls, websocket) out of the box — the non-default features exist to
+      # keep the *default* `cargo build`/CI dependency tree lean, not to ship
+      # a deliberately crippled release artifact.
+      - name: Build
+        run: cargo build --release --all-features --target ${{ matrix.target }}
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        env:
+          TARGET: ${{ matrix.target }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          bin=target/$TARGET/release/wispmq-cli
+          strip "$bin"
+          asset="wispmq-cli-$TAG_NAME-$TARGET.tar.gz"
+          tar -czf "$asset" -C "target/$TARGET/release" wispmq-cli -C "$GITHUB_WORKSPACE" LICENSE-MIT LICENSE-APACHE
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          bin="target/$TARGET/release/wispmq-cli.exe"
+          asset="wispmq-cli-$TAG_NAME-$TARGET.zip"
+          7z a "$asset" "$bin" LICENSE-MIT LICENSE-APACHE
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: gh release upload "$TAG_NAME" "$ASSET" --repo "$GITHUB_REPOSITORY" --clobber

@@ -75,6 +75,15 @@ ever comes back, it fails there rather than in someone's fresh clone), a
 `rustsec/audit-check` job against the dependency tree, and a `windows-latest`
 job that exercises `cli.rs`'s `#[cfg(not(unix))]` branch.
 
+`.github/workflows/release.yml` runs on a `vX.Y.Z` tag push (or manual
+`workflow_dispatch` against an existing tag, e.g. to backfill binaries onto a
+release cut before this workflow existed): it creates the GitHub Release if
+missing, then builds and attaches `--all-features` binaries for five targets
+(`x86_64`/`aarch64` Linux, `x86_64`/`aarch64` macOS, `x86_64` Windows) —
+`--all-features` because a release binary should support every transport
+(`tls`, `websocket`) out of the box, unlike the lean default `cargo
+build`/CI dependency tree.
+
 `tests/e2e.rs` runs the publish/subscribe and request/reply round trips
 against a real broker — `../wispmq`, if a sibling checkout exists, built and
 spawned on a scratch port at test *run* time, not a build step. No sibling
