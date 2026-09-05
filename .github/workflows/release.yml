@@ -1,10 +1,18 @@
 name: Release binaries
 
 # Builds cross-platform release binaries and attaches them to the GitHub
-# Release for a `vX.Y.Z` tag (mirroring wispmq's own tag -> release wiring in
-# its docker.yml). `workflow_dispatch` lets an existing tag be (re)built
-# without pushing a new one — e.g. to backfill binaries onto a release that
-# was cut before this workflow existed.
+# Release for a `vX.Y.Z` tag. `workflow_dispatch` (with a `tag` input) lets an
+# existing tag be (re)built without pushing a new one — e.g. to backfill
+# binaries onto a release that was cut before this workflow existed.
+#
+# This repo has GitHub's "immutable releases" protection enabled: once a
+# release is created, its assets are locked forever — there is no
+# create-then-upload-later flow. So every binary is built first and handed
+# to one final job that creates the release with all of them attached in a
+# single call. A consequence of that same protection: re-running this
+# workflow for a tag that already has a (now-immutable) release cannot add
+# or replace anything on it — delete that release first if you need to redo
+# it.
 on:
   push:
     tags: [ 'v*' ]
@@ -18,24 +26,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  ensure-release:
-    name: ensure release exists
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Create the release if it isn't there yet
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG_NAME: ${{ inputs.tag || github.ref_name }}
-        run: gh release create "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes || true
-
   build:
     name: ${{ matrix.target }}
-    needs: ensure-release
     runs-on: ${{ matrix.os }}
-    permissions:
-      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -67,6 +60,7 @@ jobs:
 
       - name: Package (unix)
         if: runner.os != 'Windows'
+        shell: bash
         env:
           TARGET: ${{ matrix.target }}
           TAG_NAME: ${{ inputs.tag || github.ref_name }}
@@ -89,8 +83,29 @@ jobs:
           7z a "$asset" "$bin" LICENSE-MIT LICENSE-APACHE
           echo "ASSET=$asset" >> "$GITHUB_ENV"
 
-      - name: Upload to the release
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+  publish:
+    name: create release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all built binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Create the release with every binary attached
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ inputs.tag || github.ref_name }}
-        run: gh release upload "$TAG_NAME" "$ASSET" --repo "$GITHUB_REPOSITORY" --clobber
+        run: gh release create "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes dist/*
