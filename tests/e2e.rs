@@ -18,9 +18,9 @@ use tokio::net::TcpStream;
 
 use wispmq_cli::cli::{Cli, Command as Subcommand, ConnectionArgs, PubArgs, RequestArgs, SubArgs};
 use wispmq_cli::client::Client;
-use wispmq_cli::mqtt::packet::Packet;
-use wispmq_cli::mqtt::types::QoS;
 use wispmq_cli::{publish, request, subscribe};
+use wispmq_protocol::packet::Packet;
+use wispmq_protocol::types::QoS;
 
 const READY_TIMEOUT: Duration = Duration::from_secs(10);
 const ROUND_TRIP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -299,7 +299,7 @@ async fn request_receives_a_responders_reply() {
                     subscribe::acknowledge(&mut client, &p)
                         .await
                         .expect("responder acks the request");
-                    let reply = wispmq_cli::mqtt::packet::Publish {
+                    let reply = wispmq_protocol::packet::Publish {
                         dup: false,
                         qos: QoS::AtLeastOnce,
                         retain: false,

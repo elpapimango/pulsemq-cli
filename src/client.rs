@@ -7,11 +7,11 @@
 
 use std::time::Duration;
 
-use crate::mqtt::framing::{read_packet, write_packet, ReadOutcome};
-use crate::mqtt::packet::{Connect, Packet};
-use crate::mqtt::types::{ProtocolVersion, ReasonCode};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::time::timeout;
+use wispmq_protocol::framing::{read_packet, write_packet, ReadOutcome};
+use wispmq_protocol::packet::{Connect, Packet};
+use wispmq_protocol::types::{ProtocolVersion, ReasonCode};
 
 use crate::cli::ConnectionArgs;
 use crate::error::{Error, Result};
@@ -62,7 +62,7 @@ where
         // sending something we will refuse mid-frame and disconnect over.
         // v3.x has no properties; the codec drops these for those versions.
         properties: {
-            let mut p = crate::mqtt::codec::Properties::new();
+            let mut p = wispmq_protocol::codec::Properties::new();
             p.maximum_packet_size = Some(max_packet_size);
             p
         },
@@ -85,10 +85,9 @@ where
             what: "connection".into(),
             code: ack.reason_code,
         }),
-        ReadOutcome::Packet(other, _) => Err(Error::Mqtt(crate::mqtt::error::protocol(format!(
-            "expected CONNACK, got {}",
-            other.name()
-        )))),
+        ReadOutcome::Packet(other, _) => Err(Error::Mqtt(wispmq_protocol::error::protocol(
+            format!("expected CONNACK, got {}", other.name()),
+        ))),
         ReadOutcome::Eof => Err(Error::Disconnected("during the handshake".into())),
     }
 }
@@ -202,7 +201,9 @@ impl Client {
     /// Send DISCONNECT and close. v3.x DISCONNECT carries no reason code or
     /// properties; the codec handles that difference.
     pub async fn disconnect(mut self) -> Result<()> {
-        let packet = Packet::Disconnect(crate::mqtt::packet::Disconnect::new(ReasonCode::Success));
+        let packet = Packet::Disconnect(wispmq_protocol::packet::Disconnect::new(
+            ReasonCode::Success,
+        ));
         self.send(&packet).await?;
         Ok(())
     }
@@ -211,10 +212,10 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mqtt::framing::{read_packet, write_packet, ReadOutcome};
-    use crate::mqtt::packet::Connack;
     use clap::Parser;
     use tokio::io::duplex;
+    use wispmq_protocol::framing::{read_packet, write_packet, ReadOutcome};
+    use wispmq_protocol::packet::Connack;
 
     fn connection_args(argv: &[&str]) -> ConnectionArgs {
         let cli = crate::cli::Cli::parse_from(argv);
@@ -343,7 +344,7 @@ mod tests {
         let will = broker.await.expect("broker task joins");
         assert_eq!(will.topic, "clients/gone");
         assert_eq!(will.payload, b"offline");
-        assert_eq!(will.qos, crate::mqtt::types::QoS::AtLeastOnce);
+        assert_eq!(will.qos, wispmq_protocol::types::QoS::AtLeastOnce);
         assert!(will.retain);
     }
 

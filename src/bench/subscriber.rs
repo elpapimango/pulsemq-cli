@@ -5,10 +5,10 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::mqtt::framing::{read_packet, write_packet, ReadOutcome};
-use crate::mqtt::packet::{Packet, PubAck, RetainHandling, Subscribe, TopicFilter};
-use crate::mqtt::types::{QoS, ReasonCode};
 use tokio::sync::watch;
+use wispmq_protocol::framing::{read_packet, write_packet, ReadOutcome};
+use wispmq_protocol::packet::{Packet, PubAck, RetainHandling, Subscribe, TopicFilter};
+use wispmq_protocol::types::{QoS, ReasonCode};
 
 use crate::bench::payload;
 use crate::bench::stats::{Counters, Samples};
@@ -167,11 +167,11 @@ mod tests {
     use super::*;
     use crate::bench::payload::{self, Header};
     use crate::bench::stats::Counters;
-    use crate::mqtt::framing::{read_packet, write_packet, ReadOutcome};
-    use crate::mqtt::packet::{Connack, Publish, SubAck};
-    use crate::mqtt::types::{ProtocolVersion, ReasonCode};
     use clap::Parser;
     use tokio::net::TcpListener;
+    use wispmq_protocol::framing::{read_packet, write_packet, ReadOutcome};
+    use wispmq_protocol::packet::{Connack, Publish, SubAck};
+    use wispmq_protocol::types::{ProtocolVersion, ReasonCode};
 
     /// Bound on how long any test may wait on a task that a bug elsewhere in
     /// this file could hang forever: a wedged subscriber or broker stub must
@@ -234,7 +234,7 @@ mod tests {
             );
             let publish = Publish {
                 dup: false,
-                qos: crate::mqtt::types::QoS::AtMostOnce,
+                qos: wispmq_protocol::types::QoS::AtMostOnce,
                 retain: false,
                 topic: "bench/0".into(),
                 packet_id: None,
@@ -350,7 +350,7 @@ mod tests {
             .expect("SUBACK");
             let publish = Publish {
                 dup: false,
-                qos: crate::mqtt::types::QoS::AtMostOnce,
+                qos: wispmq_protocol::types::QoS::AtMostOnce,
                 retain: false,
                 topic: "bench/0".into(),
                 packet_id: None,
@@ -440,7 +440,7 @@ mod tests {
             );
             let publish = Publish {
                 dup: false,
-                qos: crate::mqtt::types::QoS::AtMostOnce,
+                qos: wispmq_protocol::types::QoS::AtMostOnce,
                 retain: false,
                 topic: "bench/0".into(),
                 packet_id: None,

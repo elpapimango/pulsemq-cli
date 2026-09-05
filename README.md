@@ -9,8 +9,10 @@ message, subscribe to topics, or do one request/reply round trip. One binary
 with three subcommands.
 
 Written from scratch in Rust against the OASIS MQTT specifications, including
-the wire format: the codec, the 15 control packets and the framing all live in
-this crate under `src/mqtt`. It speaks to any spec-conformant broker.
+the wire format: the codec, the 15 control packets and the framing live in
+[`wispmq-protocol`](https://github.com/elpapimango/wispmq-protocol), a
+crates.io dependency shared with the [WispMQ](https://github.com/elpapimango/wispmq)
+broker. It speaks to any spec-conformant broker.
 
 ## Build
 

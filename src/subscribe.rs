@@ -3,9 +3,9 @@
 
 use std::io::Write;
 
-use crate::mqtt::codec::Properties;
-use crate::mqtt::packet::{Packet, PubAck, Publish, Subscribe, TopicFilter};
-use crate::mqtt::types::{QoS, ReasonCode};
+use wispmq_protocol::codec::Properties;
+use wispmq_protocol::packet::{Packet, PubAck, Publish, Subscribe, TopicFilter};
+use wispmq_protocol::types::{QoS, ReasonCode};
 
 use crate::cli::SubArgs;
 use crate::client::Client;
@@ -71,7 +71,7 @@ pub async fn subscribe(client: &mut Client, filters: &[String], qos: QoS) -> Res
                 qos,
                 no_local: false,
                 retain_as_published: false,
-                retain_handling: crate::mqtt::packet::RetainHandling::SendAtSubscribe,
+                retain_handling: wispmq_protocol::packet::RetainHandling::SendAtSubscribe,
             })
             .collect(),
     };

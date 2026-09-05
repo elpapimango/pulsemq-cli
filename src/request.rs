@@ -3,9 +3,9 @@
 //! The subscribe must precede the publish, or a fast responder can answer
 //! before the subscription exists and the reply is lost.
 
-use crate::mqtt::codec::Properties;
-use crate::mqtt::packet::{Packet, PubAck, Publish};
-use crate::mqtt::types::{ProtocolVersion, QoS, ReasonCode};
+use wispmq_protocol::codec::Properties;
+use wispmq_protocol::packet::{Packet, PubAck, Publish};
+use wispmq_protocol::types::{ProtocolVersion, QoS, ReasonCode};
 
 use crate::cli::RequestArgs;
 use crate::client::Client;

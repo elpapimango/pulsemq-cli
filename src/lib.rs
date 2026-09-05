@@ -1,9 +1,10 @@
 //! `wispmq-cli` — a command-line MQTT client.
 //!
-//! The wire format lives in `mqtt` (`packet`, `codec`, `framing`, `types`) and
-//! knows nothing about the client above it. The rest of the crate is the
-//! client half: dialling and the CONNECT handshake (`client`), the argument
-//! surface (`cli`), and one module per subcommand (`publish`, `subscribe`,
+//! The wire format is the `wispmq-protocol` crate (`packet`, `codec`,
+//! `framing`, `types`), shared with the WispMQ broker, and knows nothing
+//! about the client above it. The rest of this crate is the client half:
+//! dialling and the CONNECT handshake (`client`), the argument surface
+//! (`cli`), and one module per subcommand (`publish`, `subscribe`,
 //! `request`, `bench`).
 //!
 //! Anything shared by two subcommands belongs in `client` or is re-used
@@ -14,7 +15,6 @@ pub mod bench;
 pub mod cli;
 pub mod client;
 pub mod error;
-pub mod mqtt;
 pub mod publish;
 pub mod request;
 pub mod subscribe;

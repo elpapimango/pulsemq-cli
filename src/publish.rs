@@ -5,9 +5,9 @@
 
 use std::io::{BufRead, Read};
 
-use crate::mqtt::codec::Properties;
-use crate::mqtt::packet::{Packet, Publish};
-use crate::mqtt::types::{QoS, ReasonCode};
+use wispmq_protocol::codec::Properties;
+use wispmq_protocol::packet::{Packet, Publish};
+use wispmq_protocol::types::{QoS, ReasonCode};
 
 use crate::cli::PubArgs;
 use crate::client::Client;
@@ -158,7 +158,7 @@ async fn publish_one(
             let rec = expect_ack(client, "publish").await?;
             check(rec, "publish")?;
             let id = packet_id.expect("QoS 2 always allocates a packet identifier");
-            let pubrel = crate::mqtt::packet::PubAck::new(id, ReasonCode::Success);
+            let pubrel = wispmq_protocol::packet::PubAck::new(id, ReasonCode::Success);
             client.send(&Packet::Pubrel(pubrel)).await?;
             let comp = expect_ack(client, "publish").await?;
             check(comp, "publish")?;
@@ -181,7 +181,7 @@ async fn expect_ack(client: &mut Client, what: &str) -> Result<ReasonCode> {
                 })
             }
             other => {
-                return Err(Error::Mqtt(crate::mqtt::error::protocol(format!(
+                return Err(Error::Mqtt(wispmq_protocol::error::protocol(format!(
                     "expected an acknowledgement, got {}",
                     other.name()
                 ))))
@@ -206,12 +206,12 @@ fn check(code: ReasonCode, what: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mqtt::framing::{read_packet, write_packet, ReadOutcome};
-    use crate::mqtt::packet::Connack;
-    use crate::mqtt::types::ProtocolVersion;
     use clap::Parser;
     use tokio::net::TcpListener;
     use tokio::time::Duration;
+    use wispmq_protocol::framing::{read_packet, write_packet, ReadOutcome};
+    use wispmq_protocol::packet::Connack;
+    use wispmq_protocol::types::ProtocolVersion;
 
     fn pub_args(argv: &[&str]) -> PubArgs {
         match crate::cli::Cli::parse_from(argv).command {
@@ -262,7 +262,7 @@ mod tests {
             match read_packet(&mut stream, 65_535, version).await {
                 Ok(ReadOutcome::Packet(Packet::Publish(p), _)) => {
                     if let Some(id) = p.packet_id {
-                        let ack = crate::mqtt::packet::PubAck::new(id, ReasonCode::Success);
+                        let ack = wispmq_protocol::packet::PubAck::new(id, ReasonCode::Success);
                         write_packet(&mut stream, &Packet::Puback(ack), version)
                             .await
                             .expect("PUBACK");

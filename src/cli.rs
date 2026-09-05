@@ -6,9 +6,9 @@
 //! `ConnectionArgs` flattened into every subcommand, so `--broker` means the
 //! same thing and appears in the same place everywhere.
 
-use crate::mqtt::types::ProtocolVersion;
 use clap::builder::PossibleValue;
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use wispmq_protocol::types::ProtocolVersion;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -276,7 +276,7 @@ impl ConnectionArgs {
     /// zeroed once the caller drops it (typically right after the CONNECT
     /// that carries it is encoded) instead of sitting in memory until the
     /// process exits.
-    pub fn password(&self) -> std::io::Result<Option<crate::mqtt::secret::SecretBytes>> {
+    pub fn password(&self) -> std::io::Result<Option<wispmq_protocol::secret::SecretBytes>> {
         if let Some(path) = &self.password_file {
             warn_if_readable_by_others(path);
             let mut bytes = std::fs::read(path)?;
@@ -308,13 +308,13 @@ impl ConnectionArgs {
     /// `--will-payload`, `--will-qos` and `--will-retain` all
     /// `requires = "will_topic"` at the clap layer, so there is nothing
     /// left here to validate.
-    pub fn will(&self) -> Option<crate::mqtt::packet::Will> {
+    pub fn will(&self) -> Option<wispmq_protocol::packet::Will> {
         let topic = self.will_topic.clone()?;
-        Some(crate::mqtt::packet::Will {
-            qos: crate::mqtt::types::QoS::from_u8(self.will_qos)
+        Some(wispmq_protocol::packet::Will {
+            qos: wispmq_protocol::types::QoS::from_u8(self.will_qos)
                 .expect("clap's range(0..=2) already validated --will-qos"),
             retain: self.will_retain,
-            properties: crate::mqtt::codec::Properties::new(),
+            properties: wispmq_protocol::codec::Properties::new(),
             topic,
             payload: self
                 .will_payload
@@ -913,7 +913,7 @@ mod tests {
         let will = conn.will().expect("a Will was configured");
         assert_eq!(will.topic, "bye");
         assert!(will.payload.is_empty());
-        assert_eq!(will.qos, crate::mqtt::types::QoS::AtMostOnce);
+        assert_eq!(will.qos, wispmq_protocol::types::QoS::AtMostOnce);
         assert!(!will.retain);
     }
 

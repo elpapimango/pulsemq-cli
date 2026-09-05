@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use crate::mqtt::types::ReasonCode;
+use wispmq_protocol::types::ReasonCode;
 
 /// Latency samples in nanoseconds, collected by one task.
 ///
@@ -384,8 +384,8 @@ mod tests {
         assert_eq!(summary.max_ns, 3);
     }
 
-    use crate::mqtt::types::ReasonCode;
     use std::time::Duration;
+    use wispmq_protocol::types::ReasonCode;
 
     fn totals() -> CounterTotals {
         let counters = Counters::default();

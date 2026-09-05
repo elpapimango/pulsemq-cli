@@ -12,10 +12,10 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::mqtt::framing::{read_packet, write_packet, ReadOutcome};
-use crate::mqtt::packet::{Packet, PubAck, Publish};
-use crate::mqtt::types::{ProtocolVersion, QoS, ReasonCode};
 use tokio::sync::{mpsc, watch, Mutex, Semaphore};
+use wispmq_protocol::framing::{read_packet, write_packet, ReadOutcome};
+use wispmq_protocol::packet::{Packet, PubAck, Publish};
+use wispmq_protocol::types::{ProtocolVersion, QoS, ReasonCode};
 
 use crate::bench::payload::{self, Header};
 use crate::bench::schedule::Schedule;
@@ -338,7 +338,9 @@ pub async fn run(
     }
     let _ = write_packet(
         &mut writer,
-        &Packet::Disconnect(crate::mqtt::packet::Disconnect::new(ReasonCode::Success)),
+        &Packet::Disconnect(wispmq_protocol::packet::Disconnect::new(
+            ReasonCode::Success,
+        )),
         version,
     )
     .await;
@@ -391,12 +393,12 @@ pub async fn run(
 mod tests {
     use super::*;
     use crate::bench::stats::Counters;
-    use crate::mqtt::framing::{read_packet, write_packet, ReadOutcome};
-    use crate::mqtt::packet::{Connack, PubAck};
-    use crate::mqtt::types::{ProtocolVersion, ReasonCode};
     use clap::Parser;
     use std::sync::atomic::AtomicU64;
     use tokio::net::TcpListener;
+    use wispmq_protocol::framing::{read_packet, write_packet, ReadOutcome};
+    use wispmq_protocol::packet::{Connack, PubAck};
+    use wispmq_protocol::types::{ProtocolVersion, ReasonCode};
 
     /// Bound on how long any test may wait on a task that a bug elsewhere in
     /// this file could hang forever: a wedged publisher or ack task must

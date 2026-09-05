@@ -27,14 +27,19 @@ what they do, short letters only for what is typed often (`-b`, `-p`, `-t`,
 
 **This crate stands alone.** It has no dependency on the WispMQ broker — not a
 path dependency, not a git one. `cargo build` in a fresh clone works with
-nothing checked out beside it. The wire format lives in-tree under `src/mqtt`.
+nothing checked out beside it. The wire format is the
+[`wispmq-protocol`](https://github.com/elpapimango/wispmq-protocol) crate, a
+normal versioned crates.io dependency — until 0.9.2, it lived in-tree under
+`src/mqtt` as a hand-maintained duplicate of the broker's own codec, which is
+exactly the maintenance burden the split exists to remove.
 
 `wispmq` is a separate broker in Rust (https://github.com/elpapimango/wispmq),
-useful as a local server to test against and nothing more. Do not reintroduce a
-dependency on it, and do not reach into `../wispmq` for source: if the client
-needs something the codec does not have, add it to `src/mqtt`. Nothing here
-should require a WispMQ-specific server — against any spec-conformant broker
-the client must still work.
+useful as a local server to test against and nothing more. Do not reintroduce
+a dependency on the *broker* crate, and do not reach into `../wispmq` for
+source: if the client needs something the protocol layer does not have, add
+it to `wispmq-protocol` (a sibling checkout, or its own PR) — not back into
+this repo. Nothing here should require a WispMQ-specific server — against
+any spec-conformant broker the client must still work.
 
 This is a client — it speaks MQTT over the wire, it does not link a broker or
 share its state.
@@ -96,9 +101,9 @@ the request for exactly this reason.
 ## Architecture
 
 ```
-src/mqtt/         the wire format, and nothing above it:
-                    codec/    Section 1.5 primitives + Section 2.2.2 properties
-                    packet/   all 15 control packets, all three versions
+wispmq-protocol   external crate, the wire format, nothing above it (own repo):
+                    codec     Section 1.5 primitives + Section 2.2.2 properties
+                    packet    all 15 control packets, all three versions
                     framing   read_packet / write_packet over AsyncRead/Write
                     types     ProtocolVersion, QoS, ReasonCode
                     error     MqttError: Malformed / Protocol / Reason / Io
@@ -130,14 +135,16 @@ tests/e2e.rs        publish/subscribe and request/reply against a real
                     broker, discovered at run time (see Commands above)
 ```
 
-`src/mqtt` is the layering boundary: it may not know anything about `cli`,
+`wispmq-protocol` is the layering boundary: it knows nothing about `cli`,
 `client` or the subcommands, and everything above it goes through it rather
-than touching bytes. It shares a common ancestor with the WispMQ broker's
-codec, so a fix here is often worth carrying to that repo by hand — but the two
-have separate release cycles now and are free to diverge. Do not re-couple them
-to keep them in sync.
+than touching bytes. Since 0.9.2 it's an external crate, not an in-tree
+module — the WispMQ broker depends on the same crate (as of its own 0.9.8),
+so a fix there is shared automatically rather than needing to be hand-ported
+between repos. A protocol-layer change (new packet field, new version quirk,
+a decoder bugfix) is made in `wispmq-protocol`'s own repo, then picked up
+here by bumping its version in `Cargo.toml`.
 
-Everything version-specific belongs in `client.rs` or in `src/mqtt`.
+Everything version-specific belongs in `client.rs` or in `wispmq-protocol`.
 `request` calls `subscribe::subscribe`, `subscribe::acknowledge` and
 `subscribe::print_message` rather than repeating them; keep new shared behaviour
 factored the same way instead of copying it into a third subcommand.

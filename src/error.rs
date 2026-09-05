@@ -6,8 +6,8 @@
 
 use std::fmt;
 
-use crate::mqtt::error::MqttError;
-use crate::mqtt::types::ReasonCode;
+use wispmq_protocol::error::MqttError;
+use wispmq_protocol::types::ReasonCode;
 
 pub type Result<T> = std::result::Result<T, Error>;
 

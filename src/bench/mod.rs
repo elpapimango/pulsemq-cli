@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::watch;
 
-use crate::mqtt::types::QoS;
+use wispmq_protocol::types::QoS;
 
 use crate::bench::stats::{Counters, Report, ReportConfig, Samples};
 use crate::cli::BenchArgs;
